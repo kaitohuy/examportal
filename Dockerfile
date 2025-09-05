@@ -2,7 +2,7 @@
 FROM maven:3.9.8-eclipse-temurin-21 AS build
 WORKDIR /app
 COPY . .
-RUN ./mvnw -q -DskipTests package
+RUN mvn -q -DskipTests package
 
 # Bước 2: Run ứng dụng bằng JDK
 FROM eclipse-temurin:21-jdk
