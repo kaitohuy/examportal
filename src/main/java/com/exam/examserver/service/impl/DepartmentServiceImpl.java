@@ -28,14 +28,18 @@ public class DepartmentServiceImpl implements DepartmentService {
     @Transactional
     public DepartmentDTO createDepartment(DepartmentDTO dto) {
 
-        User headUser = userRepository
-                .findById(dto.getHeadUser().getId())
-                .orElseThrow(() -> new EntityNotFoundException("Head user not found"));
-
         Department entity = departmentMapper.toEntity(dto);
-        entity.setHeadUser(headUser);
-        Department saved = departmentRepository.save(entity);
 
+        if (dto.getHeadUser() != null && dto.getHeadUser().getId() != null) {
+            User headUser = userRepository
+                    .findById(dto.getHeadUser().getId())
+                    .orElseThrow(() -> new EntityNotFoundException("Head user not found"));
+            entity.setHeadUser(headUser);
+        } else {
+            entity.setHeadUser(null); // cho phép null
+        }
+
+        Department saved = departmentRepository.save(entity);
         return departmentMapper.toDto(saved);
     }
 

@@ -5,14 +5,16 @@ public class SubjectDTO {
     private String name;
     private String code;
     private Long departmentId;
+    private String departmentName;
 
     public SubjectDTO() {} // no-args
 
-    public SubjectDTO(Long id, String name, String code, Long departmentId) {
+    public SubjectDTO(Long id, String name, String code, Long departmentId, String departmentName) {
         this.id = id;
         this.name = name;
         this.code = code;
         this.departmentId = departmentId;
+        this.departmentName = departmentName;
     }
     //getter/setter
 
@@ -46,5 +48,13 @@ public class SubjectDTO {
 
     public void setDepartmentId(Long departmentId) {
         this.departmentId = departmentId;
+    }
+
+    public String getDepartmentName() {
+        return departmentName;
+    }
+
+    public void setDepartmentName(String departmentName) {
+        this.departmentName = departmentName;
     }
 }

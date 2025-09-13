@@ -7,14 +7,13 @@ import com.exam.examserver.mapper.UserMapper;
 import com.exam.examserver.model.user.Role;
 import com.exam.examserver.model.user.User;
 import com.exam.examserver.model.user.UserRole;
-import com.exam.examserver.repo.RoleRepository;
-import com.exam.examserver.repo.UserRepository;
-import com.exam.examserver.repo.UserRoleRepository;
+import com.exam.examserver.repo.*;
 import com.exam.examserver.service.UserService;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashSet;
 import java.util.List;
@@ -29,13 +28,15 @@ public class UserServiceImpl implements UserService {
     @Autowired private UserRoleRepository userRoleRepository;
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private UserMapper userMapper;
+    @Autowired private DepartmentRepository departmentRepository;
+    @Autowired private TeacherSubjectRepository teacherSubjectRepository;
 
     @Override
     public UserDTO createUser(CreateUserDTO userDto) throws Exception {
         // Map DTO -> Entity
         User user = userMapper.toEntity(userDto);
         // default profile
-        user.setProfile("default.png");
+        user.setProfile(null);
 
         // kiểm tra tồn tại
         if (userRepository.findByUsername(user.getUsername()).isPresent()) {
@@ -72,8 +73,18 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    @Transactional
     public void deleteUser(Long userId) {
-        userRepository.deleteById(userId);
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new EntityNotFoundException("User not found with id: " + userId));
+
+        departmentRepository.findByHeadUser_Id(userId).ifPresent(dept -> {
+            dept.setHeadUser(null);
+            departmentRepository.save(dept);
+        });
+        teacherSubjectRepository.deleteByTeacherId(userId);
+        userRoleRepository.deleteByUserId(userId);
+        userRepository.delete(user);
     }
 
     @Override
@@ -84,19 +95,25 @@ public class UserServiceImpl implements UserService {
                 .collect(Collectors.toList());
     }
 
-    @Override
     public UserStatisticsDTO getUserStatistics() {
-        long totalUsers = userRepository.count();
-        long activeUsers = userRepository.countByStatus(Status.ACTIVE);
-        long lockedUsers = userRepository.countByStatus(Status.LOCKED); // hoặc thêm "LOCKED" nếu có
-        long totalTeachers = userRepository.countByUserRoles_Role_RoleName(RoleType.TEACHER);
+        long totalUsers        = userRepository.count();
+        long totalDepartments  = departmentRepository.count(); // NEW
+        long totalTeachers     = userRepository.countByUserRoles_Role_RoleName(RoleType.TEACHER);
+        long totalHeads        = userRepository.countByUserRoles_Role_RoleName(RoleType.HEAD); // nếu muốn
 
         UserStatisticsDTO dto = new UserStatisticsDTO();
         dto.setTotalUsers(totalUsers);
-        dto.setActiveUsers(activeUsers);
-        dto.setLockedUsers(lockedUsers);
+        dto.setTotalDepartments(totalDepartments);
         dto.setTotalTeachers(totalTeachers);
+        dto.setTotalHeads(totalHeads);
         return dto;
+    }
+
+    // UserServiceImpl.java
+    @Override
+    public User findByIdOrThrow(Long id) {
+        return userRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("User not found: " + id));
     }
 
     @Override
@@ -104,7 +121,7 @@ public class UserServiceImpl implements UserService {
         User user = userRepository.findById(dto.getId())
                 .orElseThrow(() -> new EntityNotFoundException("User not found with id: " + dto.getId()));
 
-        if (dto.getStudentCode() != null) user.setStudentCode(dto.getStudentCode());
+        if (dto.getTeacherCode() != null) user.setTeacherCode(dto.getTeacherCode());
         if (dto.getUsername() != null) user.setUsername(dto.getUsername());
         if (dto.getFirstName() != null) user.setFirstName(dto.getFirstName());
         if (dto.getLastName() != null) user.setLastName(dto.getLastName());
@@ -112,8 +129,6 @@ public class UserServiceImpl implements UserService {
         if (dto.getPhone() != null) user.setPhone(dto.getPhone());
         if (dto.getGender() != null) user.setGender(dto.getGender());
         if (dto.getBirthDate() != null) user.setBirthDate(dto.getBirthDate());
-        if (dto.getMajor() != null) user.setMajor(dto.getMajor());
-        if (dto.getClassName() != null) user.setClassName(dto.getClassName());
         if (dto.getProfile() != null) user.setProfile(dto.getProfile());
         if (dto.getStatus() != null) user.setStatus(dto.getStatus());
         // Enabled là boolean, nên cần xử lý riêng nếu cần

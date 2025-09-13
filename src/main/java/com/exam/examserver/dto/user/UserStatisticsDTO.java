@@ -2,9 +2,9 @@ package com.exam.examserver.dto.user;
 
 public class UserStatisticsDTO {
     private long totalUsers;
-    private long activeUsers;
-    private long lockedUsers;
+    private long totalDepartments;
     private long totalTeachers;
+    private long totalHeads;
     // getters/setters
 
     public UserStatisticsDTO() {
@@ -18,27 +18,27 @@ public class UserStatisticsDTO {
         this.totalUsers = totalUsers;
     }
 
-    public long getActiveUsers() {
-        return activeUsers;
-    }
-
-    public void setActiveUsers(long activeUsers) {
-        this.activeUsers = activeUsers;
-    }
-
-    public long getLockedUsers() {
-        return lockedUsers;
-    }
-
-    public void setLockedUsers(long lockedUsers) {
-        this.lockedUsers = lockedUsers;
-    }
-
     public long getTotalTeachers() {
         return totalTeachers;
     }
 
     public void setTotalTeachers(long totalTeachers) {
         this.totalTeachers = totalTeachers;
+    }
+
+    public long getTotalDepartments() {
+        return totalDepartments;
+    }
+
+    public void setTotalDepartments(long totalDepartments) {
+        this.totalDepartments = totalDepartments;
+    }
+
+    public long getTotalHeads() {
+        return totalHeads;
+    }
+
+    public void setTotalHeads(long totalHeads) {
+        this.totalHeads = totalHeads;
     }
 }

@@ -1,9 +1,12 @@
 package com.exam.examserver.controller;
 
 import com.exam.examserver.dto.user.DepartmentDTO;
+import com.exam.examserver.dto.user.DepartmentStatsDTO;
+import com.exam.examserver.enums.RoleType;
 import com.exam.examserver.mapper.DepartmentMapper;
 import com.exam.examserver.mapper.UserMapper;
 import com.exam.examserver.model.user.Department;
+import com.exam.examserver.repo.SubjectRepository;
 import com.exam.examserver.repo.UserRepository;
 import com.exam.examserver.service.DepartmentService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,6 +29,9 @@ public class DepartmentController {
 
     @Autowired
     private DepartmentMapper departmentMapper;
+
+    @Autowired
+    private SubjectRepository subjectRepository;
 
     @Autowired
     private UserMapper userMapper;
@@ -66,6 +72,15 @@ public class DepartmentController {
     public ResponseEntity<Void> deleteDepartment(@PathVariable Long id) {
         departmentService.deleteDepartment(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{id}/stats")
+    public DepartmentStatsDTO stats(@PathVariable Long id) {
+        DepartmentStatsDTO dto = new DepartmentStatsDTO();
+        dto.setSubjectCount(subjectRepository.countByDepartmentId(id));
+        dto.setTeacherCount(userRepository.countByRoleAndDepartment(RoleType.TEACHER, id));
+        dto.setUnassignedSubjectCount(subjectRepository.countUnassignedByDepartmentId(id)); // optional
+        return dto;
     }
 }
 

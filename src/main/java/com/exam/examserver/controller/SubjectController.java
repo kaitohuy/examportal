@@ -64,17 +64,6 @@ public class SubjectController {
         return ResponseEntity.ok(subjectWithTeachersMapper.toDto(subject));
     }
 
-    // API lấy theo departmentId
-    @GetMapping("/department/{departmentId}")
-    public ResponseEntity<List<SubjectDTO>> getByDepartment(
-            @PathVariable Long departmentId) {
-        List<Subject> subjects = subjectService.getSubjectsByDepartmentId(departmentId);
-        List<SubjectDTO> dtos = subjects.stream()
-                .map(subjectMapper::toDto)
-                .toList();
-        return ResponseEntity.ok(dtos);
-    }
-
     @PostMapping("/")
     public ResponseEntity<SubjectDTO> createSubject(@RequestBody SubjectDTO subjectDTO) {
         if (subjectRepository.existsByCode(subjectDTO.getCode())) {
@@ -125,13 +114,13 @@ public class SubjectController {
     }
 
     @GetMapping("/my")
-    @PreAuthorize("hasAuthority('TEACHER')") // tuỳ cấu hình
+    @PreAuthorize("hasAuthority('TEACHER')")
     public List<SubjectDTO> mySubjects(Authentication auth) {
-        Long teacherId = ((CustomUserDetails) auth.getPrincipal()).getId(); // bạn đã trả id trong CustomUserDetails
+        Long teacherId = ((CustomUserDetails) auth.getPrincipal()).getId();
         List<TeacherSubject> ts = teacherSubjectRepo.findByTeacherId(teacherId);
         return ts.stream()
                 .map(TeacherSubject::getSubject)
-                .map(s -> new SubjectDTO(s.getId(), s.getName(), s.getCode(), s.getDepartment().getId()))
+                .map(subjectMapper::toDto)
                 .toList();
     }
 
@@ -140,4 +129,23 @@ public class SubjectController {
         Subject s = subjectService.getSubjectById(id);
         return ResponseEntity.ok(subjectMapper.toDto(s));
     }
+
+    @GetMapping("/department/{departmentId}")
+    public ResponseEntity<?> getByDepartment(
+            @PathVariable Long departmentId,
+            @RequestParam(value = "include", required = false) String include) {
+
+        boolean includeTeachers = "teachers".equalsIgnoreCase(include);
+
+        if (includeTeachers) {
+            var subjects = subjectService.getSubjectsByDepartmentIdWithTeachers(departmentId);
+            var dtos = subjects.stream().map(subjectWithTeachersMapper::toDto).toList();
+            return ResponseEntity.ok(dtos);
+        } else {
+            var subjects = subjectService.getSubjectsByDepartmentId(departmentId);
+            var dtos = subjects.stream().map(subjectMapper::toDto).toList();
+            return ResponseEntity.ok(dtos);
+        }
+    }
+
 }

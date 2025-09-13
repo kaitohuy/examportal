@@ -11,6 +11,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
@@ -48,4 +49,32 @@ public interface QuestionRepository extends JpaRepository<Question, Long> {
 
     @Query("select coalesce(max(q.cloneIndex), 0) from Question q where q.parent.id = :parentId")
     Integer findMaxCloneIndexByParentId(@Param("parentId") Long parentId);
+
+    // Đếm theo createdAt (không null-param trong SQL)
+    long countByCreatedAtBetween(LocalDateTime from, LocalDateTime to);
+    long countByCreatedAtGreaterThanEqual(LocalDateTime from);
+    long countByCreatedAtLessThan(LocalDateTime to);
+
+    // Theo độ khó + thời gian
+    long countByDifficulty(Difficulty difficulty);
+    long countByDifficultyAndCreatedAtBetween(Difficulty difficulty, LocalDateTime from, LocalDateTime to);
+    long countByDifficultyAndCreatedAtGreaterThanEqual(Difficulty difficulty, LocalDateTime from);
+    long countByDifficultyAndCreatedAtLessThan(Difficulty difficulty, LocalDateTime to);
+
+    // Theo nhãn (labels là ElementCollection -> dùng @Query JOIN, nhưng KHÔNG truyền null)
+    @Query("select count(q) from Question q join q.labels l where l = :label")
+    long countByLabel(@Param("label") QuestionLabel label);
+
+    @Query("select count(q) from Question q join q.labels l where l = :label and q.createdAt >= :from and q.createdAt < :to")
+    long countByLabelBetween(@Param("label") QuestionLabel label,
+                             @Param("from") LocalDateTime from,
+                             @Param("to")   LocalDateTime to);
+
+    @Query("select count(q) from Question q join q.labels l where l = :label and q.createdAt >= :from")
+    long countByLabelFrom(@Param("label") QuestionLabel label,
+                          @Param("from") LocalDateTime from);
+
+    @Query("select count(q) from Question q join q.labels l where l = :label and q.createdAt < :to")
+    long countByLabelTo(@Param("label") QuestionLabel label,
+                        @Param("to")   LocalDateTime to);
 }

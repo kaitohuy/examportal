@@ -20,7 +20,7 @@ public class Department {
 
     // Đây là owning side: chứa khóa ngoại head_user_id
     @OneToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "head_user_id")
+    @JoinColumn(name = "head_user_id", nullable = true)
     private User headUser;
 
     //inverse side: subject

@@ -65,4 +65,12 @@ public class SubjectServiceImpl implements SubjectService {
         Subject subject = getSubjectById(id);
         subjectRepository.delete(subject);
     }
+
+    @Override
+    public List<Subject> getSubjectsByDepartmentIdWithTeachers(Long departmentId) {
+        if (!departmentRepository.existsById(departmentId)) {
+            throw new EntityNotFoundException("Department not found with id " + departmentId);
+        }
+        return subjectRepository.findByDepartmentIdWithTeachers(departmentId);
+    }
 }

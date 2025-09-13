@@ -13,6 +13,6 @@ public interface SubjectService {
     Subject getSubjectByIdWithTeachers(Long id);
     List<Subject> getSubjectsByDepartmentId(Long departmentId);
     List<Subject> getAllSubjects();
-
+    List<Subject> getSubjectsByDepartmentIdWithTeachers(Long departmentId);
 }
 

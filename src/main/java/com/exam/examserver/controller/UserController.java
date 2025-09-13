@@ -1,6 +1,7 @@
 package com.exam.examserver.controller;
 
 import com.exam.examserver.dto.user.*;
+import com.exam.examserver.mapper.UserMapper;
 import com.exam.examserver.model.user.User;
 import com.exam.examserver.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,6 +16,7 @@ import java.util.*;
 public class UserController {
 
     @Autowired private UserService userService;
+    @Autowired private UserMapper userMapper;
 
     @PostMapping("/")
     public ResponseEntity<UserDTO> createUser(@RequestBody CreateUserDTO userDto) throws Exception {
@@ -24,8 +26,10 @@ public class UserController {
 
     //update user
     @PutMapping("/")
-    public ResponseEntity<User> update(@RequestBody UserDTO dto) {
-        return ResponseEntity.ok(this.userService.updateUser(dto));
+    public ResponseEntity<UserWithRolesAndDeptDTO> update(@RequestBody UserDTO dto) {
+        User updated = userService.updateUser(dto);
+        UserWithRolesAndDeptDTO out = userMapper.toDtoWithDept(updated); // map có roles + department
+        return ResponseEntity.ok(out);
     }
 
     //update user role
@@ -61,6 +65,13 @@ public class UserController {
     @GetMapping("/{username}")
     public ResponseEntity<UserDTO> getUser(@PathVariable String username) {
         return ResponseEntity.ok(userService.getUser(username));
+    }
+
+    @GetMapping("/id/{id}")
+    public ResponseEntity<UserWithRolesAndDeptDTO> getUserById(@PathVariable Long id) {
+        User entity = userService.findByIdOrThrow(id);
+        UserWithRolesAndDeptDTO dto = userMapper.toDtoWithDept(entity);
+        return ResponseEntity.ok(dto);
     }
 
     @DeleteMapping("/{userId}")

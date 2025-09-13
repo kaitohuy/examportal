@@ -6,7 +6,7 @@ import java.time.LocalDate;
 
 public class CreateUserDTO {
 
-    private String studentCode;
+    private String teacherCode;
     private String username;
     private String password;      // Bắt buộc
     private String firstName;
@@ -18,12 +18,12 @@ public class CreateUserDTO {
     private String major;
     private String className;
 
-    public String getStudentCode() {
-        return studentCode;
+    public String getteacherCode() {
+        return teacherCode;
     }
 
-    public void setStudentCode(String studentCode) {
-        this.studentCode = studentCode;
+    public void setteacherCode(String teacherCode) {
+        this.teacherCode = teacherCode;
     }
 
     public String getUsername() {

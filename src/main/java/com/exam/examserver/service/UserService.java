@@ -20,6 +20,8 @@ public interface UserService {
 
     void toggleUserEnabled(Long id, boolean enabled);
 
+    User findByIdOrThrow(Long id);
+
     void resetPassword(Long userId, String newPassword);
 
     void toggleUserEnabled(Long id, Boolean enabled);

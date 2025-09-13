@@ -16,7 +16,7 @@ public class User{
     @GeneratedValue(strategy = GenerationType.AUTO)
     private Long id;
 
-    private String studentCode;
+    private String teacherCode;
     private String username;
     private String password;
     @Column(name = "first_name")
@@ -28,8 +28,6 @@ public class User{
     @Enumerated(EnumType.STRING)
     private Gender gender;
     private LocalDate birthDate;
-    private String major;
-    private String className;
     private String profile;
 
     private boolean enabled = true;
@@ -59,20 +57,20 @@ public class User{
         this.department = department;
     }
 
-    public String getStudentCode() {
-        return studentCode;
+    public String getTeacherCode() {
+        return teacherCode;
     }
 
-    public void setStudentCode(String studentCode) {
-        this.studentCode = studentCode;
+    public void setTeacherCode(String teacherCode) {
+        this.teacherCode = teacherCode;
     }
 
     public User() {
 
     }
 
-    public User(String studentCode, String password, String username, String firstName, String lastName, String email, String phone, Gender gender, LocalDate birthDate, String major, String className, String profile, Set<UserRole> userRoles) {
-        this.studentCode = studentCode;
+    public User(String teacherCode, String password, String username, String firstName, String lastName, String email, String phone, Gender gender, LocalDate birthDate, String profile, Set<UserRole> userRoles) {
+        this.teacherCode = teacherCode;
         this.password = password;
         this.username = username;
         this.firstName = firstName;
@@ -81,8 +79,6 @@ public class User{
         this.phone = phone;
         this.gender = gender;
         this.birthDate = birthDate;
-        this.major = major;
-        this.className = className;
         this.profile = profile;
         this.userRoles = userRoles;
     }
@@ -165,22 +161,6 @@ public class User{
 
     public void setBirthDate(LocalDate birthDate) {
         this.birthDate = birthDate;
-    }
-
-    public String getMajor() {
-        return major;
-    }
-
-    public void setMajor(String major) {
-        this.major = major;
-    }
-
-    public String getClassName() {
-        return className;
-    }
-
-    public void setClassName(String className) {
-        this.className = className;
     }
 
     public boolean isEnabled() {

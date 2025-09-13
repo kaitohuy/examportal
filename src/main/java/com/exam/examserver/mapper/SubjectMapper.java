@@ -11,7 +11,8 @@ import java.util.List;
 @Mapper(componentModel = "spring")
 public interface SubjectMapper {
 
-    @Mapping(source = "department.id", target = "departmentId")
+    @Mapping(source = "department.id",   target = "departmentId")
+    @Mapping(source = "department.name", target = "departmentName") // NEW
     SubjectDTO toDto(Subject subject);
 
     @Mapping(target = "department", ignore = true) // optional

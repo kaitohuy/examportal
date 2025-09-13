@@ -7,7 +7,7 @@ import java.time.LocalDate;
 
 public class UserDTO {
     private Long id;
-    private String studentCode;
+    private String teacherCode;
     private String username;
     private String firstName;
     private String lastName;
@@ -15,8 +15,6 @@ public class UserDTO {
     private String phone;
     private Gender gender;
     private LocalDate birthDate;
-    private String major;
-    private String className;
     private String profile;
     private boolean enabled;
     private Status status;
@@ -40,12 +38,12 @@ public class UserDTO {
         this.id = id;
     }
 
-    public String getStudentCode() {
-        return studentCode;
+    public String getTeacherCode() {
+        return teacherCode;
     }
 
-    public void setStudentCode(String studentCode) {
-        this.studentCode = studentCode;
+    public void setTeacherCode(String teacherCode) {
+        this.teacherCode = teacherCode;
     }
 
     public String getUsername() {
@@ -102,22 +100,6 @@ public class UserDTO {
 
     public void setBirthDate(LocalDate birthDate) {
         this.birthDate = birthDate;
-    }
-
-    public String getMajor() {
-        return major;
-    }
-
-    public void setMajor(String major) {
-        this.major = major;
-    }
-
-    public String getClassName() {
-        return className;
-    }
-
-    public void setClassName(String className) {
-        this.className = className;
     }
 
     public String getProfile() {

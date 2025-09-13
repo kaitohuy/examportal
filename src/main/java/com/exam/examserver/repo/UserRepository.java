@@ -22,7 +22,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
     long countByUserRoles_Role_RoleName(RoleType roleName);
 
     List<User> findByStatus(Status status);
-
+    Optional<User> findByEmailIgnoreCase(String email);
     @Query("""
        select u.id
        from User u
@@ -33,4 +33,14 @@ public interface UserRepository extends JpaRepository<User, Long> {
                 like lower(concat('%', :q, '%'))
        """)
     List<Long> searchIdsByKeyword(@Param("q") String q);
+
+    long countByDepartment_Id(Long deptId);
+
+    @Query("""
+       select count(distinct u) from User u
+       join u.userRoles ur
+       join ur.role r
+       where r.roleName = :role and u.department.id = :deptId
+       """)
+    long countByRoleAndDepartment(@Param("role") RoleType role, @Param("deptId") Long deptId);
 }

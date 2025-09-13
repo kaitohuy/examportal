@@ -67,6 +67,7 @@ public class MySecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/user/").permitAll()
                         .requestMatchers("/logout-silent").permitAll()
                         .requestMatchers("/generate-token").permitAll()
+                        .requestMatchers("/auth/forgot-password", "/auth/reset-password").permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .anyRequest().authenticated()
                 )

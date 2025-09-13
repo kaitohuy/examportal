@@ -12,7 +12,7 @@ public class TeacherSubject {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "teacher_id", nullable = false)
+    @JoinColumn(name = "user_id", nullable = false)
     private User teacher;
 
     // Quan hệ với Subject
