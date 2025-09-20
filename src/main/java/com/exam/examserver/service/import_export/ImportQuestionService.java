@@ -17,9 +17,9 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.*;
 import java.util.*;
 import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static com.exam.examserver.service.import_export.DocxOmmlExtractor.extractPdf;
-import static com.exam.examserver.service.import_export.DocxOmmlExtractor.extractWord;
 import static com.exam.examserver.util.ImportRegex.*;
 
 @Service
@@ -32,9 +32,23 @@ public class ImportQuestionService {
     private final GcsObjectHelper gcsObjectHelper;
     private final FileArchiveService fileArchiveService;
 
+    // ====== NEW: regex phục vụ footer + điểm ======
+    private static final Pattern P_FOOTER =
+            Pattern.compile("(?is)\\n?Ghi\\s*chú:.*?(?:\\z|\\n\\s*Họ\\s*tên\\s*SV:.*|\\n\\s*Ký\\s*tên:.*)");
+    private static final Pattern P_HEADER_POINTS =
+            Pattern.compile("^\\s*C(?:âu|au)\\s*\\d+\\s*[:\\.]?\\s*(?:\\(\\s*(\\d+)\\s*đi(?:ể|e)m\\s*\\))?",
+                    Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE | Pattern.MULTILINE);
+    private static final Pattern P_POINTS_INLINE =
+            Pattern.compile("\\(\\s*\\d+\\s*đi(?:ể|e)m\\s*\\)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+
+    private static record PreludeCut(String body, String preludeImages) {}
+
     public ImportQuestionService(QuestionService questionService,
                                  ImageStorageService imageStorageService,
-                                 ImportPreviewStore previewStore, GcsArchiveStorage gcsArchiveStorage, GcsObjectHelper gcsObjectHelper, FileArchiveService fileArchiveService) {
+                                 ImportPreviewStore previewStore,
+                                 GcsArchiveStorage gcsArchiveStorage,
+                                 GcsObjectHelper gcsObjectHelper,
+                                 FileArchiveService fileArchiveService) {
         this.questionService = questionService;
         this.imageStorageService = imageStorageService;
         this.previewStore = previewStore;
@@ -46,19 +60,17 @@ public class ImportQuestionService {
     /* ==================== PREVIEW / COMMIT ==================== */
 
     public PreviewResponse buildPreview(Long subjectId, MultipartFile file, boolean saveCopy, Set<QuestionLabel> defaultLabels) {
-        // (giữ nguyên đoạn extract như cũ)
         ExtractResult ext = extractTextAndImages(file);
 
         String full = TextNormalize.normalizePreserveNewlines(ext.getText());
         full = compactHighlightMarkers(full);
         full = breakChapterInline(full);
-        full = breakHeaderAnswerInline(full);     // chỉ Header chữ + Answer + header-số an toàn
+        full = breakHeaderAnswerInline(full);
 
         List<byte[]> images = ext.getImages();
 
-        // 1) CẮT THEO CHƯƠNG (HL-aware)
+        // 1) CẮT THEO CHƯƠNG
         String[] chapChunks = P_SPLIT_BY_CHAPTER.split(full);
-        System.out.println(Arrays.toString(chapChunks));
 
         List<PreviewBlock> blocks = new ArrayList<>();
         int idx = 0;
@@ -72,54 +84,60 @@ public class ImportQuestionService {
             if (chap.isEmpty()) continue;
 
             Integer ch = findChapterNumber(chap);
-
             if (ch != null) {
                 currentChapter = ch;
                 chap = stripChapterHeader(chap);
                 chap = removeSectionHeadingLines(chap);
-                chap = cutPreludeBeforeFirstQuestion(chap);
+                chap = cutPreludeBeforeFirstQuestion(chap); // <— thêm dòng này
             } else {
-                // 👉 phần mở đầu: bỏ qua nếu không có header câu hỏi
+                // Preface không có header “Câu …” => bỏ luôn
                 Matcher hasQ = P_SPLIT_BY_HEADER.matcher(chap);
-                if (!hasQ.find()) {
-                    continue; // SKIP preface
-                }
+                if (!hasQ.find()) continue;
                 chap = chap.substring(hasQ.start()).trim();
             }
+
+            // (khuyến nghị) bỏ footer sớm
+            chap = stripFooter(chap);
 
             // 2) Cắt theo header câu hỏi
             String[] qChunks = P_SPLIT_BY_HEADER.split(chap);
             for (String raw : qChunks) {
                 String block = raw.trim();
                 if (block.isEmpty()) continue;
+                PreviewBlock b = parseOneBlockForPreview(block, images);
+
+                // ——— Bộ lọc block rỗng/nhầm tiêu ngữ (xem mục 3 & 4) ———
+                if (looksLikeDocHeader(block)) continue; // bỏ block là tiêu ngữ/hành chính
+
+                boolean mcOk = (b.questionType == QuestionType.MULTIPLE_CHOICE)
+                        && b.optionA != null && b.optionB != null && b.optionC != null && b.optionD != null;
+
+                boolean hasContent =
+                        (b.content != null && !b.content.isBlank())
+                                || mcOk
+                                || (b.imageIndexes != null && !b.imageIndexes.isEmpty());
+
+                if (!hasContent) continue; // bỏ block rỗng
 
                 idx++;
-                PreviewBlock b = parseOneBlockForPreview(block, images);
                 b.labels = EnumSet.copyOf(def);
                 b.index = idx;
                 b.raw = block;
-
                 if (currentChapter != null) b.chapter = currentChapter;
                 blocks.add(b);
             }
         }
 
-        // Tạo session preview như cũ
         var session = previewStore.create(images, blocks);
 
-        // ===== NEW: nếu saveCopy=true -> upload file gốc vào prefix tmp/ và gắn vào session (KHÔNG ghi DB)
         if (saveCopy) {
             try {
-
                 byte[] raw = file.getBytes();
                 String origName = file.getOriginalFilename();
                 String contentType = file.getContentType();
-
-                // yêu cầu: key nằm trong "tmp/" để lifecycle rule tự xoá nếu user cancel
                 var put = gcsArchiveStorage.putTmp(raw, contentType, (origName == null ? "import.bin" : origName));
-                String tempKey = put.storageKey(); // ví dụ: tmp/<uuid>_originalName
+                String tempKey = put.storageKey();
 
-                // Lưu metadata tạm vào preview session để commit có thể promote
                 previewStore.attachTempUpload(
                         session.id,
                         tempKey,
@@ -132,12 +150,23 @@ public class ImportQuestionService {
             }
         }
 
-        // Trả về response như cũ
         PreviewResponse resp = new PreviewResponse();
         resp.sessionId = session.id;
         resp.totalBlocks = blocks.size();
         resp.blocks = blocks;
         return resp;
+    }
+
+    private boolean looksLikeDocHeader(String s) {
+        if (s == null) return false;
+        // chỉ xét vài dòng đầu để tránh “ăn” nhầm nội dung thật
+        StringBuilder head = new StringBuilder();
+        int lines = 0;
+        for (String ln : s.split("\\R", -1)) {
+            if (lines++ >= 6) break;
+            head.append(ln).append('\n');
+        }
+        return P_DOC_HEADER_HINT.matcher(head.toString()).find();
     }
 
     public ImportResult commitPreview(Long subjectId, Long userId, CommitRequest req, boolean saveCopy) {
@@ -179,14 +208,12 @@ public class ImportQuestionService {
                     dto.setOptionA(null); dto.setOptionB(null); dto.setOptionC(null); dto.setOptionD(null); dto.setAnswer(null);
                 }
 
-                // 🔴 PHẢI set labels trước khi create
                 Set<QuestionLabel> labels =
                         (cb.labels != null && !cb.labels.isEmpty()) ? cb.labels
                                 : (orig.labels != null && !orig.labels.isEmpty()) ? new HashSet<>(orig.labels)
                                 : EnumSet.of(QuestionLabel.PRACTICE);
                 dto.setLabels(labels);
 
-                // create -> labels được lưu đúng
                 QuestionDTO saved = questionService.create(subjectId, dto, userId, null);
                 Long qId = saved.getId();
 
@@ -209,18 +236,15 @@ public class ImportQuestionService {
             }
         }
 
-        // ===== NEW: nếu saveCopy=true và có tempKey trong session -> promote + ghi DB
         if (saveCopy) {
             try {
-                var temp = previewStore.getTempUpload(req.sessionId); // {key, originalName, contentType, size}
+                var temp = previewStore.getTempUpload(req.sessionId);
                 if (temp != null && temp.key() != null && !temp.key().isBlank()) {
                     String originalName = (temp.originalName() == null ? "import.bin" : temp.originalName());
                     String finalKey = "archives/" + java.util.UUID.randomUUID() + "_" + originalName;
 
-                    // copy tmp/... -> archives/...; rồi delete tmp/...
                     gcsObjectHelper.copyAndDelete(temp.key(), finalKey);
 
-                    // ghi metadata DB dựa trên object đã tồn tại (không re-upload)
                     Map<String, Object> meta = new HashMap<>();
                     meta.put("sessionId", req.sessionId);
                     meta.put("blocksRequested", (req.blocks == null ? 0 : req.blocks.size()));
@@ -238,22 +262,27 @@ public class ImportQuestionService {
                             meta
                     );
 
-                    // xoá dấu vết temp trong session
                     previewStore.clearTempUpload(req.sessionId);
                 }
             } catch (Exception e) {
-                // KHÔNG làm fail commit nếu promote/lưu DB lỗi
-                // TODO: log warn nếu bạn dùng logger
+                // ignore
             }
         }
-
         return new ImportResult(total, success, errors);
     }
 
     private PreviewBlock parseOneBlockForPreview(String rawBlock, List<byte[]> allImages) {
         PreviewBlock b = new PreviewBlock();
 
-        // 1) cắt nhãn Answer (chưa phân loại)
+        // A) Đọc điểm từ header để set Difficulty
+        Integer pts = null;
+        Matcher headPt = P_HEADER_POINTS.matcher(rawBlock);
+        if (headPt.find()) {
+            String g = headPt.group(1);
+            if (g != null) try { pts = Integer.parseInt(g); } catch (Exception ignore) {}
+        }
+
+        // B) cắt nhãn Answer (chưa phân loại)
         Matcher ansM = P_ANSWER_LABEL.matcher(rawBlock);
         String block = rawBlock;
         String pendingAnswer = null;
@@ -262,11 +291,10 @@ public class ImportQuestionService {
             block = block.substring(0, ansM.start()).trim();
         }
 
-        // 2) bỏ header -> body
+        // C) bỏ header -> body
         String body = stripHeader(block);
-        System.out.println(body);
 
-        // 3) DÒ option chỉ để PHÂN LOẠI: break option tạm thời rồi đếm distinct A–D
+        // D) DÒ option chỉ để PHÂN LOẠI
         String bodyForDetect = breakOptionsInline(body);
         Matcher detectM = P_OPT_EXTRACT.matcher(bodyForDetect);
         LinkedHashSet<String> keys = new LinkedHashSet<>();
@@ -275,20 +303,19 @@ public class ImportQuestionService {
             if (firstOptStart < 0) firstOptStart = detectM.start();
             keys.add(detectM.group(1).toUpperCase(Locale.ROOT));
         }
-        boolean isMC = (keys.size() == 4);                   // ← phải đủ 4
+        boolean isMC = (keys.size() == 4);
 
         b.questionType = isMC ? QuestionType.MULTIPLE_CHOICE : QuestionType.ESSAY;
-        b.difficulty = Difficulty.C;
+        b.difficulty = mapPoints(pts); // đặt theo điểm (mặc định C nếu null)
 
-        // 4) gán Answer đúng field
+        // E) gán Answer đúng field
         if (pendingAnswer != null) {
             if (isMC) b.answer = pendingAnswer.toUpperCase(Locale.ROOT);
             else      b.answerText = pendingAnswer;
         }
 
-        // 5) Parse theo loại
+        // F) Parse theo loại
         if (isMC) {
-            // CHỈ MC mới parse option trên bodyForDetect
             List<String> emph = new ArrayList<>();
             Matcher optM = P_OPT_EXTRACT.matcher(bodyForDetect);
             while (optM.find()) {
@@ -297,7 +324,7 @@ public class ImportQuestionService {
                 String rawVal = sanitizeText(optM.group(2).trim());
 
                 boolean highlighted = whole.contains("{hl}") || rawVal.contains("{hl}") || rawVal.contains("{/hl}");
-                String val = beautifyMath(stripInlineMarkers(rawVal).trim());
+                String val = beautifyMath(stripInlineMarkers(removePointsInline(rawVal)).trim());
 
                 switch (key) {
                     case "A": b.optionA = val; if (highlighted) emph.add("A"); break;
@@ -311,19 +338,31 @@ public class ImportQuestionService {
             }
 
             String stem = (firstOptStart >= 0) ? bodyForDetect.substring(0, firstOptStart).trim() : body.trim();
-            b.content = beautifyMath(sanitizeText(removeAllImagePlaceholders(stripInlineMarkers(stem))));
+            String stemClean = removeAllImagePlaceholders(stripInlineMarkers(removePointsInline(stem)));
+            stemClean = collapseSoftBreaks(stemClean);
+            stemClean = enforceInlineListBreaks(stemClean);
+            b.content = beautifyMath(sanitizeText(stemClean));
+
         } else {
-            // ESSAY: tuyệt đối KHÔNG break option; và nếu không muốn hiển thị hl thì strip
-            b.content = beautifyMath(sanitizeText(removeAllImagePlaceholders(stripHl(body))));
+            String cont = removeAllImagePlaceholders(stripHl(removePointsInline(body)));
+            cont = collapseSoftBreaks(cont);
+            cont = enforceInlineListBreaks(cont);
+            b.content = beautifyMath(sanitizeText(cont));
             if (b.answerText == null) b.answerText = "";
+            else b.answerText = beautifyMath(sanitizeText(enforceInlineListBreaks(collapseSoftBreaks(b.answerText))));
+
         }
 
-        // ảnh
+        // Ảnh → imageIndexes (từ body sau khi đã gắn placeholder ở PDF)
         Matcher imgM = P_IMAGE_PLACEHOLDER.matcher(body);
         while (imgM.find()) {
             int idx = safeIndex(imgM.group(1));
             if (idx >= 0 && idx < allImages.size()) b.imageIndexes.add(idx);
         }
+
+        // Footer guard
+        b.content = stripFooter(b.content);
+        if (b.answerText != null) b.answerText = stripFooter(b.answerText);
 
         if (isMC) {
             if (b.optionA == null || b.optionB == null || b.optionC == null || b.optionD == null)
@@ -346,24 +385,38 @@ public class ImportQuestionService {
         StringBuilder out = new StringBuilder();
         for (String line : text.split("\\R")) {
             String s = sanitizeText(line).trim().toLowerCase(Locale.ROOT);
-            boolean isHeading = s.matches("^(CHƯƠNG|Chương|chương|chuong|chapter|mục|muc|phần|phan|bài|bai|câu\\s*hỏi\\s*loại)\\b.*$");
+            boolean isHeading = s.matches("^(chương|chuong|chapter|mục|muc|phần|phan|bài|bai|câu\\s*hỏi\\s*loại)\\b.*$");
             if (!isHeading) out.append(line).append('\n');
         }
         return out.toString();
     }
 
     private String cutPreludeBeforeFirstQuestion(String fullText) {
-        // dùng chính pattern split-by-header (lookahead) để tìm vị trí header đầu
         Matcher m = P_SPLIT_BY_HEADER.matcher(fullText);
         return m.find() ? fullText.substring(m.start()).trim() : fullText;
     }
 
+    private String stripFooter(String s) { return s == null ? null : P_FOOTER.matcher(s).replaceAll("").trim(); }
+
     private String sanitizeText(String s) { return TextNormalize.normalizeSoftMath(s); }
+
+//    private String beautifyMath(String s) {
+//        if (s == null) return null;
+//        String out = s;
+//        out = out.replace('−', '-');
+//        out = out.replaceAll("\\s*([∧∨≡⇒=+×÷])\\s*", " $1 ");
+//        out = out.replaceAll("(?<=[\\p{L}\\p{N}\\)\\]])\\s*-\\s*(?=[\\p{L}\\p{N}\\(\\[])", " - ");
+//        out = out.replaceAll("\\s{2,}", " ").trim();
+//        return out;
+//    }
 
     private String beautifyMath(String s) {
         if (s == null) return null;
-        String out = s.replaceAll("\\s*([∧∨≡⇒=+\\-×÷])\\s*", " $1 ");
-        out = out.replaceAll("\\s{2,}", " ").trim();
+        // An toàn cho LaTeX: không chèn/thêm khoảng trắng quanh toán tử
+        // (tránh phá cú pháp \frac{...}{...}, \sum_{...}^{...}, \overline{...}...)
+        String out = s;
+        out = out.replace('−', '-');      // normalize minus
+        out = out.replaceAll("\\s{2,}", " ").trim(); // gộp cách thừa
         return out;
     }
 
@@ -371,17 +424,28 @@ public class ImportQuestionService {
 
     private static String stripHl(String s) { return s == null ? null : s.replace("{hl}", "").replace("{/hl}", ""); }
 
+    private String removePointsInline(String s) { return s == null ? null : P_POINTS_INLINE.matcher(s).replaceAll("").trim(); }
+
+    private Difficulty mapPoints(Integer pts) {
+        if (pts == null) return Difficulty.C;
+        return switch (pts) {
+            case 1 -> Difficulty.E;
+            case 2 -> Difficulty.D;
+            case 3 -> Difficulty.C;
+            case 4 -> Difficulty.B;
+            case 5 -> Difficulty.A;
+            default -> Difficulty.C;
+        };
+    }
+
     /* ==================== extract DOCX/PDF ==================== */
 
     private ExtractResult extractTextAndImages(MultipartFile file) {
         String name = (file.getOriginalFilename()==null ? "upload" : file.getOriginalFilename()).toLowerCase(Locale.ROOT);
         try (InputStream is = file.getInputStream()) {
             if (name.endsWith(".docx")) {
-                try {
-                    return extractWord(is);
-                } catch (Exception e) {
-                    throw new RuntimeException("DOCX/OMML extract failed", e);
-                }
+                try { return DocxOmmlExtractor.extractWord(is); }
+                catch (Exception e) { throw new RuntimeException("DOCX/OMML extract failed", e); }
             } else if (name.endsWith(".pdf")) {
                 return extractPdf(is);
             } else {
@@ -392,4 +456,48 @@ public class ImportQuestionService {
         }
     }
 
+    private String collapseSoftBreaks(String s) {
+        if (s == null) return null;
+        String[] lines = s.split("\\R");
+        StringBuilder out = new StringBuilder();
+        boolean first = true;
+        boolean lastBlank = false;
+
+        for (String line : lines) {
+            String t = line.trim();
+            boolean blank = t.isEmpty();
+            boolean bullet = !blank && P_BULLET_LINE.matcher(t).matches();
+
+            if (blank) {
+                if (!lastBlank && out.length() > 0) out.append("\n\n"); // đoạn mới
+                lastBlank = true;
+                continue;
+            }
+
+            if (first) {
+                out.append(t);
+            } else if (bullet || lastBlank) {
+                out.append('\n').append(t);
+            } else {
+                // nếu dòng trước kết thúc bằng dấu gạch nối -> bỏ gạch và nối liền
+                int L = out.length();
+                if (L > 0 && out.charAt(L - 1) == '-') {
+                    out.setLength(L - 1);
+                    out.append(t);
+                } else {
+                    out.append(' ').append(t);
+                }
+            }
+            first = false;
+            lastBlank = false;
+        }
+        return out.toString().replaceAll("\\s{2,}", " ").trim();
+    }
+
+    private String enforceInlineListBreaks(String s) {
+        if (s == null) return null;
+        // ...". a) ..." -> "\n a) ..."
+        s = s.replaceAll("(?<=\\.|\\?|!|:)\\s+([a-dA-D][\\)\\.])\\s+", "\n$1 ");
+        return s;
+    }
 }

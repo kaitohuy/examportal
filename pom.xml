@@ -141,13 +141,13 @@
 		<dependency>
 			<groupId>org.apache.poi</groupId>
 			<artifactId>poi-ooxml</artifactId>
-			<version>5.2.5</version>
+			<version>5.4.0</version>
 		</dependency>
 
 		<dependency>
 			<groupId>org.apache.poi</groupId>
 			<artifactId>poi-ooxml-full</artifactId>
-			<version>5.2.5</version>
+			<version>5.4.0</version>
 		</dependency>
 		<!-- Apache PDFBox for PDF extraction -->
 		<dependency>
@@ -185,7 +185,13 @@
 		<dependency>
 			<groupId>org.apache.poi</groupId>
 			<artifactId>poi-scratchpad</artifactId>
-			<version>5.2.5</version>
+			<version>5.4.0</version>
+		</dependency>
+		<!-- pom.xml -->
+		<dependency>
+			<groupId>org.jsoup</groupId>
+			<artifactId>jsoup</artifactId>
+			<version>1.17.2</version>
 		</dependency>
 
 		<!-- (tùy) StAX ổn định -->
@@ -208,6 +214,7 @@
 		<dependency>
 			<groupId>org.apache.commons</groupId>
 			<artifactId>commons-lang3</artifactId>
+			<version>3.18.0</version>
 		</dependency>
 
 		<dependency>

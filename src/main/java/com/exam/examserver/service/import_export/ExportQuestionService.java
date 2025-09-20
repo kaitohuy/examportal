@@ -40,7 +40,7 @@ import static com.exam.examserver.util.MathOmmlRenderer.splitTopLevel;
 import static com.exam.examserver.util.MathOmmlRenderer.emitMathAware;
 
 @Service
-public class QuestionExportService {
+public class ExportQuestionService {
 
     private final QuestionService questionService;
 
@@ -51,13 +51,10 @@ public class QuestionExportService {
             String bankTitle,    // "NGÂN HÀNG CÂU HỎI THI TỰ LUẬN" | "… TRẮC NGHIỆM"
             String subjectName,  // Tên học phần
             String subjectCode,  // Mã học phần
-            String program,      // Ngành đào tạo (nullable)
+            String faculty,      // Ngành đào tạo (nullable)
             String level         // Trình độ đào tạo
     ) {}
 
-    // QuestionExportService.java  (thêm ngay dưới PracticeHeader)
-    // Thay ExamHeader cũ bằng phiên bản có thêm institute/faculty/mauLabel
-    // Thay ExamHeader cũ bằng phiên bản có thêm institute/faculty/mauLabel
     public static record ExamHeader(
             String institute,   // ví dụ: "HỌC VIỆN CÔNG NGHỆ BƯU CHÍNH VIỄN THÔNG"
             String faculty,     // KHOA: (vd "Công nghệ thông tin")
@@ -74,7 +71,7 @@ public class QuestionExportService {
     ) {}
 
 
-    public QuestionExportService(QuestionService questionService) {
+    public ExportQuestionService(QuestionService questionService) {
         this.questionService = questionService;
     }
 
@@ -556,14 +553,14 @@ public class QuestionExportService {
         pbm.setAlignment(ParagraphAlignment.CENTER);
         setParaSpacing(pbm, 6, 6, 1.08);
         addRun(pbm, "KHOA: ", false, 11, true);
-        addRun(pbm, h.program(), false, 11, true);
+        addRun(pbm, h.faculty(), false, 11, true);
 
         XWPFParagraph pk = left.addParagraph();
         pk.setAlignment(ParagraphAlignment.CENTER);
         setParaSpacing(pk, 6, 6, 1.08);
         addRun(pk, "BỘ MÔN: ", true, 11, true);
-        addRun(pk, h.faculty(), false, 11, true);
-        // (bỏ vạch dưới theo yêu cầu)
+        addRun(pk, h.program(), false, 11, true);
+        System.out.println("export header: " + h.program());
 
         // ==== CỘT PHẢI: 2 dòng trống, Title + (Hình thức thi viết) ====
         for (int i = 0; i < 2; i++) {
@@ -711,7 +708,7 @@ public class QuestionExportService {
         fillHeaderCell(tbl.getRow(0).getCell(2), "Mã học phần: ", h.subjectCode());
 
         // hàng 2
-        fillHeaderCell(tbl.getRow(1).getCell(0), "Ngành đào tạo: ", h.program()==null? "" : h.program());
+        fillHeaderCell(tbl.getRow(1).getCell(0), "Ngành đào tạo: ", h.faculty()==null? "" : h.faculty());
         makeGutter(tbl.getRow(1).getCell(1));
         fillHeaderCell(tbl.getRow(1).getCell(2), "Trình độ đào tạo: ", h.level());
 

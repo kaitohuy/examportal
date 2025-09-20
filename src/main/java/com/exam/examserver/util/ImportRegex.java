@@ -114,10 +114,25 @@ public final class ImportRegex {
                     ")"
     );
 
+    public static final Pattern P_BULLET_LINE =
+            Pattern.compile("^\\s*(?:[-•]\\s+|[a-dA-D][\\)\\.]\\s+|\\([a-dA-DA-D]\\)\\s+).*");
+
     public static String breakChapterInline(String s) {
         if (s == null) return null;
         return BR_CHAPTER.matcher(s).replaceAll("\n");
     }
+
+    public static final Pattern P_DOC_HEADER_HINT = Pattern.compile(
+            "(?is)\\b(" +
+                    "CỘNG\\s+HÒA|CONG\\s+HOA|" +
+                    "XÃ\\s+HỘI|XA\\s+HOI|" +
+                    "ĐỘC\\s+LẬP|DOC\\s+LAP|" +
+                    "BỘ\\s+GIÁO\\s+DỤC|BO\\s+GIAO\\s+DUC|" +
+                    "TRƯỜNG|TRUONG|KHOA\\b|KHOÁ\\b|KHOA\\s+HỌC|" +
+                    "ĐỀ\\s+THI|DE\\s+THI|MÔN\\s+HỌC|MON\\s+HOC|" +
+                    "SỞ\\s+GD|SO\\s+GD|PHÒNG\\s+GD|PHONG\\s+GD" +
+                    ")\\b"
+    );
 
     private static String smartBreakNumericHeaders(String s) {
         if (s == null || s.isEmpty()) return s;

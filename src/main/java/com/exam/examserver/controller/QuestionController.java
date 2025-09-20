@@ -13,7 +13,7 @@ import com.exam.examserver.dto.importing.ImportPreviewStore;
 import com.exam.examserver.service.SubjectService;
 import com.exam.examserver.service.import_export.FileArchiveService;
 import com.exam.examserver.service.import_export.ImportQuestionService;
-import com.exam.examserver.service.import_export.QuestionExportService;
+import com.exam.examserver.service.import_export.ExportQuestionService;
 import com.exam.examserver.service.QuestionService;
 import org.apache.tika.Tika;
 import org.springframework.http.*;
@@ -31,7 +31,7 @@ public class QuestionController {
 
     private final QuestionService questionService;
     private final SubjectService subjectService;
-    private final QuestionExportService questionExportService;
+    private final ExportQuestionService exportQuestionService;
     private final ImportQuestionService importService;
     private final ImportPreviewStore previewStore;
     private final FileArchiveService fileArchiveService;
@@ -39,13 +39,13 @@ public class QuestionController {
 
     public QuestionController(QuestionService questionService,
                               SubjectService subjectService,
-                              QuestionExportService questionExportService,
+                              ExportQuestionService exportQuestionService,
                               ImportQuestionService importService,
                               ImportPreviewStore previewStore,
                               FileArchiveService fileArchiveService) {
         this.questionService = questionService;
         this.subjectService = subjectService;
-        this.questionExportService = questionExportService;
+        this.exportQuestionService = exportQuestionService;
         this.importService = importService;
         this.previewStore = previewStore;
         this.fileArchiveService = fileArchiveService;
@@ -128,13 +128,14 @@ public class QuestionController {
                                                  @RequestParam(required = false) String duration,
                                                  @RequestParam(required = false) Integer paperNo,
                                                  @RequestParam(required = false) String examForm,
-                                                 @RequestParam(required = false) String faculty,
+                                                 @RequestParam(required = false) String program,
                                                  @RequestParam(required = false, name = "mau") String mauLabel,
                                                  @RequestParam(defaultValue = "Đại học chính quy") String level,
                                                  // NEW: PRACTICE có tùy chọn lưu
                                                  @RequestParam(defaultValue = "false") boolean saveCopy
     ) throws Exception {
 
+        System.out.println("program: " + program);
         Subject subj = subjectService.getSubjectById(subjectId);
 
         // ---- Generate file (PDF/DOCX) giữ nguyên như cũ ----
@@ -147,19 +148,19 @@ public class QuestionController {
                 String bankTitle = "NGÂN HÀNG CÂU HỎI THI " +
                         ("TRAC_NGHIEM".equalsIgnoreCase(form) ? "TRẮC NGHIỆM" : "TỰ LUẬN");
 
-                QuestionExportService.PracticeHeader ph = new QuestionExportService.PracticeHeader(
+                ExportQuestionService.PracticeHeader ph = new ExportQuestionService.PracticeHeader(
                         bankTitle,
                         subj.getName(),
                         subj.getCode(),
                         subj.getDepartment() != null ? subj.getDepartment().getName() : "",
                         level
                 );
-                data = questionExportService.exportQuestionsToWordPractice(questionIds, includeAnswers, ph);
+                data = exportQuestionService.exportQuestionsToWordPractice(questionIds, includeAnswers, ph);
             } else {
-                QuestionExportService.ExamHeader eh = new QuestionExportService.ExamHeader(
+                ExportQuestionService.ExamHeader eh = new ExportQuestionService.ExamHeader(
                         "HỌC VIỆN CÔNG NGHỆ BƯU CHÍNH VIỄN THÔNG",
-                        (faculty == null ? "" : faculty),
                         (subj.getDepartment() != null ? subj.getDepartment().getName() : ""),
+                        (program == null ? "" : program),
                         subj.getName(),
                         subj.getCode(),
                         (semester == null ? "" : semester),
@@ -170,11 +171,11 @@ public class QuestionController {
                         (examForm == null ? "" : examForm),
                         (mauLabel == null ? "" : mauLabel)
                 );
-                data = questionExportService.exportQuestionsToWordExam(questionIds, includeAnswers, eh);
+                data = exportQuestionService.exportQuestionsToWordExam(questionIds, includeAnswers, eh);
             }
             fileNameWithExt = fileName + ".docx";
         } else {
-            data = questionExportService.exportQuestionsToPdf(questionIds, includeAnswers);
+            data = exportQuestionService.exportQuestionsToPdf(questionIds, includeAnswers);
             fileNameWithExt = fileName + ".pdf";
         }
 
@@ -198,7 +199,7 @@ public class QuestionController {
         meta.put("duration", duration);
         meta.put("paperNo", paperNo);
         meta.put("examForm", examForm);
-        meta.put("faculty", faculty);
+        meta.put("program", program);
         meta.put("mauLabel", mauLabel);
 
         // === Chính sách lưu ===

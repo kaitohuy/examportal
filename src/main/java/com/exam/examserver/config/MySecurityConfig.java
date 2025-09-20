@@ -3,6 +3,7 @@ package com.exam.examserver.config;
 import com.exam.examserver.service.impl.UserDetailsServiceImpl;
 import com.exam.examserver.config.JwtAuthenticationEntryPoint;
 import com.exam.examserver.config.JwtAuthenticationFilter;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -23,7 +24,9 @@ import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfigurationSource;
 
 @Configuration
 @EnableWebSecurity
@@ -68,10 +71,14 @@ public class MySecurityConfig {
                         .requestMatchers("/logout-silent").permitAll()
                         .requestMatchers("/generate-token").permitAll()
                         .requestMatchers("/auth/forgot-password", "/auth/reset-password").permitAll()
+                        .requestMatchers("/error").permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .anyRequest().authenticated()
                 )
-                .exceptionHandling(ex -> ex.authenticationEntryPoint(unauthorizedHandler))
+                .exceptionHandling(ex -> ex
+                        .authenticationEntryPoint(unauthorizedHandler) // 401
+                        .accessDeniedHandler(accessDeniedHandler())    // 403
+                )
                 .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
 
         http.authenticationProvider(authenticationProvider());
@@ -84,5 +91,16 @@ public class MySecurityConfig {
     @Bean
     public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
         return config.getAuthenticationManager();
+    }
+
+    @Bean
+    public AccessDeniedHandler accessDeniedHandler() {
+        return (req, res, ex) -> {
+            res.setStatus(HttpServletResponse.SC_FORBIDDEN);
+            res.setContentType("application/json");
+            res.getWriter().write("""
+                    {"status":403,"error":"Forbidden","message":"Access denied"}
+                    """);
+        };
     }
 }

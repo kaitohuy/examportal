@@ -4,6 +4,7 @@ import com.exam.examserver.enums.Difficulty;
 import com.exam.examserver.enums.QuestionLabel;
 import com.exam.examserver.enums.QuestionType;
 import com.exam.examserver.model.user.User;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import org.hibernate.annotations.BatchSize;
 
@@ -87,8 +88,12 @@ public class Question {
 
     private LocalDateTime createdAt;
 
-    @OneToMany(mappedBy = "question", fetch = FetchType.LAZY)
+    @OneToMany(mappedBy = "question", fetch = FetchType.LAZY, cascade = CascadeType.ALL)
     private Set<QuizQuestion> quizQuestions = new HashSet<>();
+
+    @JsonIgnore
+    @OneToMany(mappedBy = "parent", cascade = CascadeType.REMOVE, orphanRemoval = true)
+    private List<Question> clones = new ArrayList<>();
 
     public QuestionType getQuestionType() {
         return questionType;

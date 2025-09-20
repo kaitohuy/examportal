@@ -3,13 +3,6 @@ package com.exam.examserver.service.import_export;
 import com.exam.examserver.dto.importing.ExtractResult;
 import com.exam.examserver.util.OmmlConverter;
 import com.exam.examserver.util.TextNormalize;
-import org.apache.pdfbox.cos.COSName;
-import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.pdmodel.PDPage;
-import org.apache.pdfbox.pdmodel.PDResources;
-import org.apache.pdfbox.pdmodel.graphics.PDXObject;
-import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
-import org.apache.pdfbox.text.PDFTextStripper;
 import org.docx4j.XmlUtils;
 import org.docx4j.dml.Graphic;
 import org.docx4j.dml.GraphicData;
@@ -51,7 +44,6 @@ public class DocxOmmlExtractor {
     private static final String NS_REL  = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
     private static final String NS_MATH = "http://schemas.openxmlformats.org/officeDocument/2006/math";
 
-
     private static class NumberingState { Map<String, int[]> counters = new HashMap<>(); }
 
     public static ExtractResult extractWord(InputStream is) throws Exception {
@@ -69,15 +61,26 @@ public class DocxOmmlExtractor {
                 appendParagraph((P) unwrapped, sb, images, pkg, numState);
             } else if (unwrapped instanceof Tbl) {
                 Tbl tbl = (Tbl) unwrapped;
+                // Trong DocxOmmlExtractor.append (khi gặp Tbl):
                 for (Object ro : tbl.getContent()) {
                     Tr row = (Tr) XmlUtils.unwrap(ro);
+                    boolean firstCell = true;
                     for (Object co : row.getContent()) {
                         Tc cell = (Tc) XmlUtils.unwrap(co);
+                        if (!firstCell) sb.append(" | ");     // phân tách cột
+                        firstCell = false;
+
+                        boolean firstPara = true;
                         for (Object po : cell.getContent()) {
                             Object p = XmlUtils.unwrap(po);
-                            if (p instanceof P) appendParagraph((P) p, sb, images, pkg, numState);
+                            if (p instanceof P) {
+                                if (!firstPara) sb.append('\n'); // giữ xuống dòng trong 1 ô
+                                appendParagraph((P) p, sb, images, pkg, numState);
+                                firstPara = false;
+                            }
                         }
                     }
+                    sb.append('\n'); // kết thúc 1 hàng
                 }
             }
         }
@@ -85,35 +88,10 @@ public class DocxOmmlExtractor {
     }
 
     public static ExtractResult extractPdf(InputStream is) throws IOException {
-        List<byte[]> images = new ArrayList<>();
-        StringBuilder sb = new StringBuilder();
-        try (PDDocument pdf = PDDocument.load(is)) {
-            int pages = pdf.getNumberOfPages();
-            PDFTextStripper stripper = new PDFTextStripper();
-            for (int p = 1; p <= pages; p++) {
-                stripper.setStartPage(p);
-                stripper.setEndPage(p);
-                sb.append(stripper.getText(pdf)).append('\n');
-
-                PDPage page = pdf.getPage(p - 1);
-                PDResources res = page.getResources();
-                if (res != null) {
-                    for (COSName name : res.getXObjectNames()) {
-                        PDXObject xobj = res.getXObject(name);
-                        if (xobj instanceof PDImageXObject) {
-                            PDImageXObject img = (PDImageXObject) xobj;
-                            try (ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
-                                ImageIO.write(img.getImage(), "png", bos);
-                                images.add(bos.toByteArray());
-                                sb.append("{{image").append(images.size()).append("}}").append('\n');
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return new ExtractResult(sb.toString(), images);
+        // Uỷ quyền sang module PDF mới (giữ API cũ để tương thích ImportQuestionService)
+        return PdfOmmlExtractor.extractPdf(is);
     }
+
 
     private static void appendParagraph(P p, StringBuilder sb, List<byte[]> images,
                                         WordprocessingMLPackage pkg, NumberingState numState) {
@@ -153,6 +131,7 @@ public class DocxOmmlExtractor {
         } catch (Exception e) { return null; }
     }
 
+    // DocxOmmlExtractor.java
     private static String fallbackNumbering(P p, WordprocessingMLPackage pkg, NumberingState st) {
         try {
             PPr ppr = p.getPPr();
@@ -161,13 +140,14 @@ public class DocxOmmlExtractor {
             BigInteger numIdBI = (ppr.getNumPr().getNumId() != null) ? ppr.getNumPr().getNumId().getVal() : null;
             BigInteger ilvlBI  = (ppr.getNumPr().getIlvl()  != null) ? ppr.getNumPr().getIlvl().getVal()  : BigInteger.ZERO;
             if (numIdBI == null) return null;
-            int ilvl = ilvlBI.intValue();
+            int ilvl = Math.max(0, Math.min(8, ilvlBI.intValue())); // clamp 0..8
 
             NumberingDefinitionsPart ndp = pkg.getMainDocumentPart().getNumberingDefinitionsPart();
             if (ndp == null) return null;
             org.docx4j.wml.Numbering numbering = ndp.getJaxbElement();
             if (numbering == null) return null;
 
+            // --- find <w:num> for this numId
             org.docx4j.wml.Numbering.Num num = null;
             for (org.docx4j.wml.Numbering.Num n : numbering.getNum()) {
                 if (n.getNumId() != null && n.getNumId().equals(numIdBI)) { num = n; break; }
@@ -176,46 +156,103 @@ public class DocxOmmlExtractor {
 
             BigInteger absId = num.getAbstractNumId().getVal();
 
+            // --- find <w:abstractNum>
             org.docx4j.wml.Numbering.AbstractNum abs = null;
             for (org.docx4j.wml.Numbering.AbstractNum an : numbering.getAbstractNum()) {
                 if (an.getAbstractNumId() != null && an.getAbstractNumId().equals(absId)) { abs = an; break; }
             }
             if (abs == null) return null;
 
-            Lvl lvlDef = null;
-            for (Lvl l : abs.getLvl()) {
-                if (l.getIlvl() != null && l.getIlvl().intValue() == ilvl) { lvlDef = l; break; }
-            }
-            if (lvlDef == null) return null;
+            // --- collect level props 0..8 (defaults)
+            String[] lvlFmt   = new String[9];        // decimal / lowerRoman / upperLetter ...
+            Integer[] lvlStart= new Integer[9];       // start at (default 1)
+            String[] lvlText  = new String[9];        // "%1." , "%1.%2." ...
+            Arrays.fill(lvlFmt,   "decimal");
+            Arrays.fill(lvlStart, 1);
+            Arrays.fill(lvlText,  "%1.");
 
+            for (Lvl l : abs.getLvl()) {
+                if (l.getIlvl() == null) continue;
+                int k = l.getIlvl().intValue();
+                if (k < 0 || k > 8) continue;
+
+                if (l.getNumFmt() != null && l.getNumFmt().getVal() != null) {
+                    try { lvlFmt[k] = l.getNumFmt().getVal().value(); }
+                    catch (Throwable ignore) { lvlFmt[k] = String.valueOf(l.getNumFmt().getVal()); }
+                }
+                if (l.getStart() != null && l.getStart().getVal() != null) {
+                    lvlStart[k] = l.getStart().getVal().intValue();
+                }
+                if (l.getLvlText() != null && l.getLvlText().getVal() != null) {
+                    lvlText[k] = l.getLvlText().getVal();
+                }
+            }
+
+            // --- (optional) apply lvlOverride from <w:num> if present (non-breaking)
+            if (num.getLvlOverride() != null) {
+                for (Numbering.Num.LvlOverride ov : num.getLvlOverride()) {
+                    if (ov.getIlvl() == null) continue;
+                    int k = ov.getIlvl().intValue();
+                    if (k < 0 || k > 8) continue;
+                    Lvl l = ov.getLvl();
+                    if (l == null) continue;
+
+                    if (l.getNumFmt() != null && l.getNumFmt().getVal() != null) {
+                        try { lvlFmt[k] = l.getNumFmt().getVal().value(); }
+                        catch (Throwable ignore) { lvlFmt[k] = String.valueOf(l.getNumFmt().getVal()); }
+                    }
+                    if (l.getStart() != null && l.getStart().getVal() != null) {
+                        lvlStart[k] = l.getStart().getVal().intValue();
+                    }
+                    if (l.getLvlText() != null && l.getLvlText().getVal() != null) {
+                        lvlText[k] = l.getLvlText().getVal();
+                    }
+                }
+            }
+
+            // --- counters by numId (kept from your design)
             String key = numIdBI.toString();
             int[] ctrs = st.counters.computeIfAbsent(key, k -> new int[9]);
 
-            int start = 1;
-            if (lvlDef.getStart() != null && lvlDef.getStart().getVal() != null) start = lvlDef.getStart().getVal().intValue();
+            // init/increment current level, reset deeper levels
+            if (ctrs[ilvl] == 0) ctrs[ilvl] = (lvlStart[ilvl] != null ? lvlStart[ilvl] : 1);
+            else ctrs[ilvl] += 1;
+            for (int j = ilvl + 1; j < ctrs.length; j++) ctrs[j] = 0;
 
-            if (ctrs[ilvl] == 0) {
-                ctrs[ilvl] = start;
-                for (int j = ilvl + 1; j < ctrs.length; j++) ctrs[j] = 0;
-            } else {
-                ctrs[ilvl] += 1;
-                for (int j = ilvl + 1; j < ctrs.length; j++) ctrs[j] = 0; // <-- có điều kiện dừng
+            // if current level is bullet, just return bullet (match previous behavior)
+            String curFmt = lvlFmt[ilvl] != null ? lvlFmt[ilvl] : "decimal";
+            if ("bullet".equals(curFmt)) {
+                return "•"; // appendParagraph will add the trailing space
             }
 
-            String fmt = null;
-            if (lvlDef.getNumFmt() != null && lvlDef.getNumFmt().getVal() != null) {
-                try { fmt = lvlDef.getNumFmt().getVal().value(); }
-                catch (Throwable ignore) { fmt = String.valueOf(lvlDef.getNumFmt().getVal()); }
+            // --- build label from lvlText of *current* level (backward compatible)
+            String pattern = (lvlText[ilvl] != null ? lvlText[ilvl] : "%1.");
+
+            // replace %1..%9 with counters & formats of the corresponding levels (k-1)
+            String label = pattern;
+            for (int k = 1; k <= 9; k++) {
+                String ph = "%" + k;
+                if (label.contains(ph)) {
+                    int levelIdx = k - 1;
+                    if (levelIdx > ilvl) {
+                        // if placeholder refers to deeper level than current, drop it (Word often leaves it empty)
+                        label = label.replace(ph, "");
+                    } else {
+                        int val = ctrs[levelIdx];
+                        if (val == 0) val = (lvlStart[levelIdx] != null ? lvlStart[levelIdx] : 1);
+
+                        String fmt = (lvlFmt[levelIdx] != null ? lvlFmt[levelIdx] : "decimal");
+                        // format number for that level, but strip trailing dot to avoid "double dots"
+                        String numStr = formatByNumFmt(val, fmt).replaceAll("\\.$", "");
+                        label = label.replace(ph, numStr);
+                    }
+                }
             }
-            String numStr = formatByNumFmt(ctrs[ilvl], fmt);
 
-            String pattern = "%1.";
-            if (lvlDef.getLvlText() != null && lvlDef.getLvlText().getVal() != null) pattern = lvlDef.getLvlText().getVal();
-            String label = pattern.replace("%1", numStr);
-            for (int k = 2; k <= 9; k++) label = label.replace("%" + k, String.valueOf(ctrs[ilvl]));
-
-            return label;
-        } catch (Exception e) { return null; }
+            return label.trim();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static String formatByNumFmt(int n, String fmt) {
