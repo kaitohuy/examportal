@@ -12,8 +12,9 @@ import com.exam.examserver.model.user.TeacherSubject;
 import com.exam.examserver.repo.DepartmentRepository;
 import com.exam.examserver.repo.SubjectRepository;
 import com.exam.examserver.repo.TeacherSubjectRepository;
-import com.exam.examserver.service.SubjectService;
 import com.exam.examserver.service.TeacherSubjectService;
+import com.exam.examserver.service.impl.SubjectServiceImpl;
+
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -36,13 +37,13 @@ public class SubjectController {
     private SubjectRepository subjectRepository;
 
     @Autowired
-    private SubjectService subjectService;
+    private SubjectServiceImpl subjectService;
 
     @Autowired
-    private SubjectMapper subjectMapper; // Cho CRUD cơ bản
+    private SubjectMapper subjectMapper;
 
     @Autowired
-    private SubjectWithTeachersMapper subjectWithTeachersMapper; // Cho trường hợp có teachers
+    private SubjectWithTeachersMapper subjectWithTeachersMapper;
 
     @Autowired
     private TeacherSubjectService teacherSubjectService;
@@ -80,7 +81,6 @@ public class SubjectController {
         return ResponseEntity.status(HttpStatus.CREATED).body(subjectMapper.toDto(created));
     }
 
-
     @PutMapping("/{id}")
     public ResponseEntity<SubjectDTO> updateSubject(
             @PathVariable Long id,
@@ -115,13 +115,27 @@ public class SubjectController {
 
     @GetMapping("/my")
     @PreAuthorize("hasAuthority('TEACHER')")
-    public List<SubjectDTO> mySubjects(Authentication auth) {
+    public ResponseEntity<?> mySubjects(
+            Authentication auth,
+            @RequestParam(value = "include", required = false) String include) {
+
         Long teacherId = ((CustomUserDetails) auth.getPrincipal()).getId();
-        List<TeacherSubject> ts = teacherSubjectRepo.findByTeacherId(teacherId);
-        return ts.stream()
-                .map(TeacherSubject::getSubject)
-                .map(subjectMapper::toDto)
-                .toList();
+        boolean includeTeachers = "teachers".equalsIgnoreCase(include);
+
+        if (includeTeachers) {
+            // trả về SubjectWithTeachersDTO
+            List<Subject> subjects = subjectService.getSubjectsByTeacherIdWithTeachers(teacherId);
+            var dtos = subjects.stream().map(subjectWithTeachersMapper::toDto).toList();
+            return ResponseEntity.ok(dtos);
+        } else {
+            // giữ nguyên hành vi cũ: SubjectDTO (không kèm teachers)
+            List<TeacherSubject> ts = teacherSubjectRepo.findByTeacherId(teacherId);
+            var dtos = ts.stream()
+                    .map(TeacherSubject::getSubject)
+                    .map(subjectMapper::toDto)
+                    .toList();
+            return ResponseEntity.ok(dtos);
+        }
     }
 
     @GetMapping("/{id}/meta")
@@ -147,5 +161,4 @@ public class SubjectController {
             return ResponseEntity.ok(dtos);
         }
     }
-
 }

@@ -7,6 +7,7 @@ import com.exam.examserver.repo.SubjectRepository;
 import com.exam.examserver.service.SubjectService;
 import jakarta.persistence.EntityNotFoundException;
 import org.hibernate.annotations.Parameter;
+import org.hibernate.sql.ast.tree.expression.Over;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -72,5 +73,10 @@ public class SubjectServiceImpl implements SubjectService {
             throw new EntityNotFoundException("Department not found with id " + departmentId);
         }
         return subjectRepository.findByDepartmentIdWithTeachers(departmentId);
+    }
+
+    @Override
+    public List<Subject> getSubjectsByTeacherIdWithTeachers(Long teacherId) {
+        return subjectRepository.findByTeacherIdWithTeachers(teacherId);
     }
 }

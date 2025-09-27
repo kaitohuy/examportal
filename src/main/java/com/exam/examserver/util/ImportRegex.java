@@ -205,4 +205,22 @@ public final class ImportRegex {
         if (s == null) return null;
         return s.replaceAll("\\{/?[a-z]+\\}", "");
     }
+
+    public static final Pattern P_CMD_GROUP = Pattern.compile("\\\\[A-Za-z]+\\s*\\{[^{}]*\\}");
+    public static final Pattern P_SUP_GROUP = Pattern.compile("\\^\\{[^{}]*\\}");
+    public static final Pattern P_SUB_GROUP = Pattern.compile("_(\\{[^{}]*\\})");
+
+    // Các khối toán cần bảo vệ
+    public static final Pattern P_MATH_ENV = Pattern.compile(
+            "(\\\\\\[(?:.|\\R)*?\\\\\\])"      // \[ ... \]
+                    + "|(\\$\\$(?:.|\\R)*?\\$\\$)"       // $$ ... $$
+                    + "|(\\\\\\((?:.|\\R)*?\\\\\\))"     // \( ... \)
+                    + "|(\\$(?:\\\\.|[^$])*?\\$)"        // $ ... $
+                    + "|(\\\\begin\\{[^}]+\\}(?:.|\\R)*?\\\\end\\{[^}]+\\})", // \begin{...}...\end{...}
+            Pattern.DOTALL
+    );
+
+    // Token inline trần: base + (_{...}|^{...})+
+    public static final Pattern P_BARE_LTX_TOKEN =
+            Pattern.compile("([\\p{L}\\p{N}\\)\\]\\}])(?:_(\\{[^}]+\\})|\\^(\\{[^}]+\\}))+");
 }

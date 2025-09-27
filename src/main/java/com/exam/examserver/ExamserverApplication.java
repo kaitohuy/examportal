@@ -1,11 +1,21 @@
 package com.exam.examserver;
 
+import com.exam.examserver.enums.QuestionType;
+import com.exam.examserver.model.exam.Question;
+import com.exam.examserver.repo.QuestionRepository;
 import com.exam.examserver.service.UserService;
+import com.exam.examserver.util.TextSim;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Bean;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.EnableScheduling;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @SpringBootApplication
 @EnableScheduling
@@ -21,36 +31,55 @@ public class ExamserverApplication implements CommandLineRunner {
 	@Override
 	public void run(String... args) throws Exception {
 		System.out.println("starting code");
-
-//		User user = new User();
-//		user.setStudentCode("B22DCCN384");
-//		user.setPassword("pass");
-//		user.setUsername("admin");
-//		user.setFirstName("Huy");
-//		user.setLastName("Nguyen Doan");
-//		user.setEmail("huynguyendoan0305@gmail.com");
-//		user.setPhone("0975796204");
-//		user.setGender(Gender.MALE);
-//		user.setBirthDate(LocalDate.of(2004, 5, 3));
-//		user.setMajor("CNTT");
-//		user.setClassName("D22CQCN12-B");
-//
-//		Role role = new Role(1L, RoleType.ADMIN);
-//		UserRole userRole = new UserRole();
-//		userRole.setRole(role);
-//		userRole.setUser(user);
-//
-//		Role role2 = new Role(2L, RoleType.NORMAL);
-//		UserRole userRole2 = new UserRole();
-//		userRole2.setRole(role2);
-//		userRole2.setUser(user);
-//
-//		Set<UserRole> userRoleSet = new HashSet<>();
-//		userRoleSet.add(userRole);
-//		userRoleSet.add(userRole2);
-//
-//		User user1 = this.userService.createUser(user, userRoleSet);
-//		System.out.println(user1.getUsername());
-
 	}
+
+//	@Bean
+//	CommandLineRunner backfillContentNorm(QuestionRepository repo) {
+//		return args -> {
+//			// chạy một lần thôi, xong thì comment lại
+//			repo.findAll().forEach(q -> {
+//				String packed = (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE)
+//						? TextSim.packMultipleChoice(q.getContent(), q.getOptionA(), q.getOptionB(), q.getOptionC(), q.getOptionD())
+//						: q.getContent();
+//				q.setContentNorm(TextSim.forSimilarity(packed));
+//				repo.save(q);
+//			});
+//		};
+//	}
+//	@Bean
+//	CommandLineRunner backfillContentMathNorm(QuestionRepository repo) {
+//		return args -> {
+//			final int PAGE_SIZE = 500;
+//			long total = repo.count();
+//			long done = 0;
+//			int pageIdx = 0;
+//			while (true) {
+//				Page<Question> page = repo.findAll(PageRequest.of(pageIdx, PAGE_SIZE));
+//				if (page.isEmpty()) break;
+//
+//				List<Question> toSave = new ArrayList<>(page.getContent().size());
+//				for (Question q : page.getContent()) {
+//					// probe: MC thì gói A–D, còn lại lấy content
+//					String probe = (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE)
+//							? TextSim.packMultipleChoice(q.getContent(), q.getOptionA(), q.getOptionB(), q.getOptionC(), q.getOptionD())
+//							: q.getContent();
+//
+//					// math-aware fingerprint
+//					String mathNorm = TextSim.forSimilarityMath(probe);
+//					q.setContentMathNorm(mathNorm);
+//
+//					// (tuỳ chọn) nếu bạn vẫn dùng text-only thì cập nhật khi đang null
+//					if (q.getContentNorm() == null || q.getContentNorm().isBlank()) {
+//						q.setContentNorm(TextSim.forSimilarity(probe));
+//					}
+//
+//					toSave.add(q);
+//				}
+//
+//				repo.saveAll(toSave);
+//				if (!page.hasNext()) break;
+//				pageIdx++;
+//			}
+//		};
+//	}
 }

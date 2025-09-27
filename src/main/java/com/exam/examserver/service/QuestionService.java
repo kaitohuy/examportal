@@ -2,35 +2,30 @@ package com.exam.examserver.service;
 
 import com.exam.examserver.dto.exam.CreateQuestionDTO;
 import com.exam.examserver.dto.exam.QuestionDTO;
+import com.exam.examserver.dto.exam.QuestionFilter;
 import com.exam.examserver.enums.QuestionLabel;
 import com.exam.examserver.model.exam.CloneRequest;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Set;
 
 public interface QuestionService {
-    List<QuestionDTO> getAllBySubject(Long subjectId);
-
-    // Lọc theo nhãn (PRACTICE/EXAM), chỉ trả bản gốc (parent IS NULL)
-    List<QuestionDTO> getAllBySubject(Long subjectId, Set<QuestionLabel> labelsFilter);
-
     QuestionDTO getById(Long questionId);
-
-    QuestionDTO create(Long subjectId, CreateQuestionDTO payload, Long creatorUserId, MultipartFile image);
-
-    QuestionDTO update(Long questionId, CreateQuestionDTO payload, MultipartFile image);
-
+    QuestionDTO create(Long subjectId, CreateQuestionDTO payload, Long creatorUserId,
+                       List<MultipartFile> images);
+    QuestionDTO update(Long questionId, CreateQuestionDTO payload,
+                       List<MultipartFile> images);
     void delete(Long questionId);
 
     List<QuestionDTO> findByIds(List<Long> questionIds);
-
-    void updateImageUrl(Long questionId, String imageUrl);
-
-    void addImages(Long questionId, List<String> imageUrls);
-
-    // ===== Clone API =====
-    List<QuestionDTO> getClones(Long questionId);
+    void addImages(Long questionId, List<String> imageUrls); // (tuỳ)
 
     List<QuestionDTO> cloneQuestion(Long subjectId, Long questionId, Long creatorUserId, CloneRequest req);
+    Page<QuestionDTO> getClones(Long questionId, Pageable pageable);
+    Page<QuestionDTO> pageBySubject(Long subjectId, QuestionFilter filter, Pageable pageable);
+    List<Long> findIdsByFilter(Long subjectId, QuestionFilter filter);
+    int deleteAllByIds(List<Long> ids);
 }

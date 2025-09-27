@@ -6,11 +6,14 @@ import com.exam.examserver.dto.importing.*;
 import com.exam.examserver.enums.Difficulty;
 import com.exam.examserver.enums.QuestionLabel;
 import com.exam.examserver.enums.QuestionType;
+import com.exam.examserver.repo.QuestionRepository;
 import com.exam.examserver.service.QuestionService;
+import com.exam.examserver.service.dup.FingerprintService;
 import com.exam.examserver.storage.GcsArchiveStorage;
 import com.exam.examserver.storage.GcsObjectHelper;
 import com.exam.examserver.storage.ImageStorageService;
 import com.exam.examserver.util.TextNormalize;
+import com.exam.examserver.util.TextSim;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -31,7 +34,7 @@ public class ImportQuestionService {
     private final GcsArchiveStorage gcsArchiveStorage;
     private final GcsObjectHelper gcsObjectHelper;
     private final FileArchiveService fileArchiveService;
-
+    private final FingerprintService fingerprintService;
     // ====== NEW: regex phục vụ footer + điểm ======
     private static final Pattern P_FOOTER =
             Pattern.compile("(?is)\\n?Ghi\\s*chú:.*?(?:\\z|\\n\\s*Họ\\s*tên\\s*SV:.*|\\n\\s*Ký\\s*tên:.*)");
@@ -48,13 +51,14 @@ public class ImportQuestionService {
                                  ImportPreviewStore previewStore,
                                  GcsArchiveStorage gcsArchiveStorage,
                                  GcsObjectHelper gcsObjectHelper,
-                                 FileArchiveService fileArchiveService) {
+                                 FileArchiveService fileArchiveService, QuestionRepository questionRepo, FingerprintService fingerprintService) {
         this.questionService = questionService;
         this.imageStorageService = imageStorageService;
         this.previewStore = previewStore;
         this.gcsArchiveStorage = gcsArchiveStorage;
         this.gcsObjectHelper = gcsObjectHelper;
         this.fileArchiveService = fileArchiveService;
+        this.fingerprintService = fingerprintService;
     }
 
     /* ==================== PREVIEW / COMMIT ==================== */
@@ -124,6 +128,56 @@ public class ImportQuestionService {
                 b.index = idx;
                 b.raw = block;
                 if (currentChapter != null) b.chapter = currentChapter;
+
+                // "nội dung so giống”
+                var probe = (b.questionType == QuestionType.MULTIPLE_CHOICE)
+                        ? TextSim.packMultipleChoice(b.content, b.optionA, b.optionB, b.optionC, b.optionD)
+                        : b.content;
+
+                var fp = fingerprintService.build(probe);
+                var candIds = fingerprintService.candidates(subjectId, fp, 200);
+
+                // Tải minimal DTO theo id (bạn đã có questionService.findByIds(ids))
+                var cands = questionService.findByIds(candIds);
+
+                double best = 0.0;
+                List<Long> dupIds = new ArrayList<>();
+
+                for (var dto : cands) {
+                    // build probe của câu trong DB
+                    String otherProbe;
+                    if (dto.getQuestionType() == QuestionType.MULTIPLE_CHOICE) {
+                        otherProbe = TextSim.packMultipleChoice(dto.getContent(), dto.getOptionA(), dto.getOptionB(), dto.getOptionC(), dto.getOptionD());
+                    } else {
+                        otherProbe = (dto.getContent()==null?"":dto.getContent()) + "\n" + (dto.getAnswerText()==null?"":dto.getAnswerText());
+                    }
+
+                    var otherFp = fingerprintService.build(otherProbe);
+                    int ham = com.exam.examserver.util.simhash.SimHash64.hamming(fp.simhash(), otherFp.simhash());
+
+                    double score;
+                    if (ham <= 3) {
+                        score = 0.95; // rất giống
+                    } else if (ham <= 6) {
+                        // xác nhận thêm cosine (shingle 3-5)
+                        score = com.exam.examserver.util.simhash.TfidfCosine.cosine(probe, otherProbe);
+                    } else {
+                        continue;
+                    }
+
+                    if (score >= 0.70) {
+                        dupIds.add(dto.getId());
+                        best = Math.max(best, score);
+                    }
+                }
+
+                b.duplicateOfIds = dupIds;
+                b.duplicateScore = best;
+                if (best >= 0.85) {
+                    b.warnings.add("Nghi ngờ trùng câu hỏi (≈ " + Math.round(best*100) + "%).");
+                }
+
+
                 blocks.add(b);
             }
         }
@@ -400,23 +454,28 @@ public class ImportQuestionService {
 
     private String sanitizeText(String s) { return TextNormalize.normalizeSoftMath(s); }
 
-//    private String beautifyMath(String s) {
-//        if (s == null) return null;
-//        String out = s;
-//        out = out.replace('−', '-');
-//        out = out.replaceAll("\\s*([∧∨≡⇒=+×÷])\\s*", " $1 ");
-//        out = out.replaceAll("(?<=[\\p{L}\\p{N}\\)\\]])\\s*-\\s*(?=[\\p{L}\\p{N}\\(\\[])", " - ");
-//        out = out.replaceAll("\\s{2,}", " ").trim();
-//        return out;
-//    }
-
     private String beautifyMath(String s) {
         if (s == null) return null;
-        // An toàn cho LaTeX: không chèn/thêm khoảng trắng quanh toán tử
-        // (tránh phá cú pháp \frac{...}{...}, \sum_{...}^{...}, \overline{...}...)
         String out = s;
-        out = out.replace('−', '-');      // normalize minus
-        out = out.replaceAll("\\s{2,}", " ").trim(); // gộp cách thừa
+
+        // 1) Bọc danh sách số sau \in hoặc ∈ thành \{ … \}
+        out = out.replaceAll(
+                "(?<=\\\\in)\\s*(?![\\[{(])([0-9]+(?:\\s*[,;]\\s*[0-9]+)+)",
+                " \\\\{$1\\\\}"
+        );
+        out = out.replaceAll(
+                "(?<=∈)\\s*(?![\\[{(])([0-9]+(?:\\s*[,;]\\s*[0-9]+)+)",
+                " \\\\{$1\\\\}"
+        );
+
+        // 2) Bọc các token LaTeX “trần” (x^{2}, a_{i}, …) CHỈ ở ngoài các khối toán
+        out = TextNormalize.wrapBareInlineMath(out);  // <-- thêm dòng này
+        // 2b) Gỡ sub/sup rỗng (nếu còn lạc)
+        out = out.replaceAll("(?<!\\\\)_\\{\\s*\\}", "");
+        out = out.replaceAll("(?<!\\\\)\\^\\{\\s*\\}", "");
+
+        // 3) Làm sạch nhẹ
+        out = out.replace('−','-').replaceAll("\\s{2,}", " ").trim();
         return out;
     }
 

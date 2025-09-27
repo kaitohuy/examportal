@@ -14,5 +14,6 @@ public interface SubjectService {
     List<Subject> getSubjectsByDepartmentId(Long departmentId);
     List<Subject> getAllSubjects();
     List<Subject> getSubjectsByDepartmentIdWithTeachers(Long departmentId);
+    List<Subject> getSubjectsByTeacherIdWithTeachers(Long teacherId);
 }
 

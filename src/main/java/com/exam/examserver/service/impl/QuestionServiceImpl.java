@@ -2,19 +2,28 @@ package com.exam.examserver.service.impl;
 
 import com.exam.examserver.dto.exam.CreateQuestionDTO;
 import com.exam.examserver.dto.exam.QuestionDTO;
+import com.exam.examserver.dto.exam.QuestionFilter;
 import com.exam.examserver.enums.Difficulty;
 import com.exam.examserver.enums.QuestionLabel;
 import com.exam.examserver.enums.QuestionType;
 import com.exam.examserver.mapper.QuestionMapper;
 import com.exam.examserver.model.exam.*;
 import com.exam.examserver.model.user.User;
+import com.exam.examserver.repo.QuestionImageRepository;
 import com.exam.examserver.repo.QuestionRepository;
 import com.exam.examserver.repo.SubjectRepository;
 import com.exam.examserver.repo.UserRepository;
+import com.exam.examserver.repo.spec.QuestionSpecs;
+import com.exam.examserver.service.dup.FingerprintService;
 import com.exam.examserver.storage.ImageStorageService;
-import com.exam.examserver.dto.importing.ImportPreviewStore;
 import com.exam.examserver.service.QuestionService;
+import com.exam.examserver.util.TextSim;
+import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityNotFoundException;
+import jakarta.persistence.PersistenceContext;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -33,38 +42,23 @@ public class QuestionServiceImpl implements QuestionService {
     private final UserRepository userRepo;
     private final QuestionMapper mapper;
     private final ImageStorageService imageStorageService;
+    private final FingerprintService fingerprintService;
+    private final QuestionImageRepository imageRepo;
+    @PersistenceContext
+    private EntityManager em;
 
     public QuestionServiceImpl(QuestionRepository questionRepo,
                                SubjectRepository subjectRepo,
                                UserRepository userRepo,
                                QuestionMapper mapper,
-                               ImageStorageService imageStorageService) {
+                               ImageStorageService imageStorageService, FingerprintService fingerprintService, QuestionImageRepository imageRepo) {
         this.questionRepo = questionRepo;
         this.subjectRepo = subjectRepo;
         this.userRepo = userRepo;
         this.mapper = mapper;
         this.imageStorageService = imageStorageService;
-    }
-
-    @Override
-    public List<QuestionDTO> getAllBySubject(Long subjectId) {
-        subjectRepo.findById(subjectId)
-                .orElseThrow(() -> new EntityNotFoundException("Subject not found"));
-
-        return questionRepo.findBySubjectId(subjectId)
-                .stream().map(mapper::toDto).collect(Collectors.toList());
-    }
-
-    @Override
-    public List<QuestionDTO> getAllBySubject(Long subjectId, Set<QuestionLabel> labelsFilter) {
-        subjectRepo.findById(subjectId)
-                .orElseThrow(() -> new EntityNotFoundException("Subject not found"));
-
-        List<Question> list = (labelsFilter != null && !labelsFilter.isEmpty())
-                ? questionRepo.findBySubjectIdAndAnyLabelIn(subjectId, labelsFilter)
-                : questionRepo.findBySubjectId(subjectId);
-
-        return list.stream().map(mapper::toDto).collect(Collectors.toList());
+        this.fingerprintService = fingerprintService;
+        this.imageRepo = imageRepo;
     }
 
     @Override
@@ -87,7 +81,7 @@ public class QuestionServiceImpl implements QuestionService {
     }
 
     @Override
-    public QuestionDTO create(Long subjectId, CreateQuestionDTO payload, Long creatorUserId, MultipartFile image) {
+    public QuestionDTO create(Long subjectId, CreateQuestionDTO payload, Long creatorUserId, List<MultipartFile> images) {
         Subject subject = subjectRepo.findById(subjectId)
                 .orElseThrow(() -> new EntityNotFoundException("Subject not found"));
         User creator = userRepo.findById(creatorUserId)
@@ -124,23 +118,25 @@ public class QuestionServiceImpl implements QuestionService {
             q.setCloneIndex((maxIdx == null ? 0 : maxIdx) + 1);
         }
 
+        String probe = (payload.getQuestionType() == QuestionType.MULTIPLE_CHOICE)
+                ? TextSim.packMultipleChoice(payload.getContent(),
+                payload.getOptionA(), payload.getOptionB(), payload.getOptionC(), payload.getOptionD())
+                : payload.getContent();
+
         Question saved = questionRepo.save(q);
 
-        if (image != null && !image.isEmpty()) {
-            try {
-                String newImageUrl = imageStorageService.storeImage(image, saved.getId());
-                saved.setImageUrl(newImageUrl);
-                questionRepo.save(saved);
-            } catch (IOException e) {
-                throw new RuntimeException("Lỗi khi upload hình ảnh", e);
-            }
+        // Lưu gallery nếu có
+        if (images != null && !images.isEmpty()) {
+            List<String> urls = storeImages(saved.getId(), images);
+            applyGallery(saved, urls, /*replace*/ true);
         }
-
-        return mapper.toDto(saved);
+        Question persisted = questionRepo.save(saved);
+        fingerprintService.upsert(persisted);
+        return mapper.toDto(persisted);
     }
 
     @Override
-    public QuestionDTO update(Long questionId, CreateQuestionDTO payload, MultipartFile image) {
+    public QuestionDTO update(Long questionId, CreateQuestionDTO payload, List<MultipartFile> images) {
         Question q = questionRepo.findById(questionId)
                 .orElseThrow(() -> new EntityNotFoundException("Question not found"));
 
@@ -160,20 +156,64 @@ public class QuestionServiceImpl implements QuestionService {
 
         q.setLabels(normalizeLabels(payload.getLabels()));
 
-        if (image != null && !image.isEmpty()) {
-            try {
-                if (q.getImageUrl() != null) {
-                    imageStorageService.deleteImage(q.getImageUrl());
-                }
-                String imageUrl = imageStorageService.storeImage(image, q.getId());
-                q.setImageUrl(imageUrl);
-            } catch (IOException e) {
-                throw new RuntimeException("Failed to upload image", e);
+        if (images != null) {
+            // xóa file vật lý ảnh cũ
+            Set<String> oldUrls = new LinkedHashSet<>();
+            if (q.getImages() != null) {
+                for (QuestionImage im : q.getImages()) if (im.getUrl() != null) oldUrls.add(im.getUrl());
+            }
+            if (q.getImageUrl() != null) oldUrls.add(q.getImageUrl()); // cover cũ (sẽ set lại sau)
+            for (String u : oldUrls) {
+                try { imageStorageService.deleteImage(u); } catch (Exception ignored) {}
+            }
+
+            // xóa record gallery cũ
+            imageRepo.deleteByQuestionId(q.getId());
+            q.getImages().clear();
+            q.setImageUrl(null);
+
+            // lưu gallery mới
+            if (!images.isEmpty()) {
+                List<String> urls = storeImages(q.getId(), images);
+                applyGallery(q, urls, /*replace*/ true);
             }
         }
 
+        String probe = (payload.getQuestionType() == QuestionType.MULTIPLE_CHOICE)
+                ? TextSim.packMultipleChoice(payload.getContent(),
+                payload.getOptionA(), payload.getOptionB(), payload.getOptionC(), payload.getOptionD())
+                : payload.getContent();
+
         Question updated = questionRepo.save(q);
+        fingerprintService.upsert(updated);
         return mapper.toDto(updated);
+    }
+
+    private List<String> storeImages(Long questionId, List<MultipartFile> files) {
+        List<String> urls = new ArrayList<>();
+        for (MultipartFile f : files) {
+            if (f == null || f.isEmpty()) continue;
+            try {
+                urls.add(imageStorageService.storeImage(f, questionId));
+            } catch (IOException e) {
+                throw new RuntimeException("Upload ảnh thất bại", e);
+            }
+        }
+        return urls;
+    }
+
+    /** Áp dụng gallery & cover theo danh sách URL. Nếu replace=true, luôn set lại từ đầu. */
+    private void applyGallery(Question q, List<String> urls, boolean replace) {
+        int start = replace ? 0 : (q.getImages() == null ? 0 : q.getImages().size());
+        int idx = 0;
+        for (String url : urls) {
+            QuestionImage gi = new QuestionImage();
+            gi.setQuestion(q);
+            gi.setUrl(url);
+            gi.setOrderIndex(start + (++idx)); // 1-based
+            q.getImages().add(gi);
+        }
+        if (!urls.isEmpty()) q.setImageUrl(urls.get(0)); // cover = ảnh đầu
     }
 
     private Set<QuestionLabel> normalizeLabels(Set<QuestionLabel> in) {
@@ -233,14 +273,6 @@ public class QuestionServiceImpl implements QuestionService {
     }
 
     @Override
-    public void updateImageUrl(Long questionId, String imageUrl) {
-        Question q = questionRepo.findById(questionId)
-                .orElseThrow(() -> new EntityNotFoundException("Question not found: " + questionId));
-        q.setImageUrl(imageUrl);
-        questionRepo.save(q);
-    }
-
-    @Override
     public void addImages(Long questionId, List<String> imageUrls) {
         if (imageUrls == null || imageUrls.isEmpty()) return;
         Question q = questionRepo.findById(questionId)
@@ -260,14 +292,14 @@ public class QuestionServiceImpl implements QuestionService {
 
     // ===== Clone APIs =====
 
-    @Override
-    public List<QuestionDTO> getClones(Long questionId) {
-        Question parent = questionRepo.findById(questionId)
-                .orElseThrow(() -> new EntityNotFoundException("Question not found"));
-        Long rootId = (parent.getParent() == null ? parent.getId() : parent.getParent().getId());
-        return questionRepo.findClonesByParentId(rootId)
-                .stream().map(mapper::toDto).collect(Collectors.toList());
-    }
+//    @Override
+//    public List<QuestionDTO> getClones(Long questionId) {
+//        Question parent = questionRepo.findById(questionId)
+//                .orElseThrow(() -> new EntityNotFoundException("Question not found"));
+//        Long rootId = (parent.getParent() == null ? parent.getId() : parent.getParent().getId());
+//        return questionRepo.findClonesByParentId(rootId)
+//                .stream().map(mapper::toDto).collect(Collectors.toList());
+//    }
 
     @Override
     public List<QuestionDTO> cloneQuestion(Long subjectId, Long questionId, Long creatorUserId, CloneRequest req) {
@@ -351,5 +383,64 @@ public class QuestionServiceImpl implements QuestionService {
         }
 
         return out;
+    }
+
+    @Override
+    public Page<QuestionDTO> getClones(Long questionId, Pageable pageable) {
+        Question parent = questionRepo.findById(questionId)
+                .orElseThrow(() -> new EntityNotFoundException("Question not found"));
+        Long rootId = (parent.getParent() == null ? parent.getId() : parent.getParent().getId());
+        Page<Question> page = questionRepo.findClonesByParentId(rootId, pageable);
+        return page.map(mapper::toDto);
+    }
+
+    @Override
+    public Page<QuestionDTO> pageBySubject(Long subjectId, QuestionFilter f, Pageable pageable) {
+        subjectRepo.findById(subjectId)
+                .orElseThrow(() -> new EntityNotFoundException("Subject not found"));
+
+        Specification<Question> spec = Specification.allOf(
+                QuestionSpecs.subjectId(subjectId),
+                QuestionSpecs.isRootOnly(),
+                QuestionSpecs.hasAnyLabel(f.getLabels()),
+                QuestionSpecs.difficulty(f.getDifficulty()),
+                QuestionSpecs.chapter(f.getChapter()),
+                QuestionSpecs.type(f.getType()),
+                QuestionSpecs.createdByContains(f.getCreatedBy()),
+                QuestionSpecs.createdBetween(f.getFrom(), f.getTo()),
+                QuestionSpecs.fullText(f.getQ())
+        );
+
+        Page<Question> page = questionRepo.findAll(spec, pageable);
+        return page.map(mapper::toDto);
+    }
+
+    @Override
+    public List<Long> findIdsByFilter(Long subjectId, QuestionFilter f) {
+        Specification<Question> spec = Specification.allOf(
+                QuestionSpecs.subjectId(subjectId),
+                QuestionSpecs.isRootOnly(),
+                QuestionSpecs.hasAnyLabel(f.getLabels()),
+                QuestionSpecs.difficulty(f.getDifficulty()),
+                QuestionSpecs.chapter(f.getChapter()),
+                QuestionSpecs.type(f.getType()),
+                QuestionSpecs.createdByContains(f.getCreatedBy()),
+                QuestionSpecs.createdBetween(f.getFrom(), f.getTo()),
+                QuestionSpecs.fullText(f.getQ())
+        );
+
+        // KHÔNG truyền sort/pageable để tránh ORDER BY trên DISTINCT (Postgres 42P10)
+        return questionRepo.findAll(spec).stream()
+                .map(Question::getId)
+                .distinct() // phòng trường hợp join labels sinh duplicate
+                .toList();
+    }
+
+    @Override
+    @Transactional
+    public int deleteAllByIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) return 0;
+        questionRepo.deleteAllByIdInBatch(ids);
+        return ids.size();
     }
 }

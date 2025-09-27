@@ -51,5 +51,13 @@ public interface SubjectRepository extends JpaRepository<Subject, Long> {
         """)
     long countUnassigned();
 
+    @Query("""
+       SELECT DISTINCT s FROM TeacherSubject ts
+       JOIN ts.subject s
+       LEFT JOIN FETCH s.teacherSubjects tss
+       LEFT JOIN FETCH tss.teacher
+       WHERE ts.teacher.id = :teacherId
+       """)
+    List<Subject> findByTeacherIdWithTeachers(@Param("teacherId") Long teacherId);
 }
 

@@ -1,9 +1,15 @@
 package com.exam.examserver.util;
 
 import java.text.Normalizer;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static com.exam.examserver.util.ImportRegex.P_BARE_LTX_TOKEN;
+import static com.exam.examserver.util.ImportRegex.P_MATH_ENV;
 
 public final class TextNormalize {
     private TextNormalize(){}
@@ -225,5 +231,37 @@ public final class TextNormalize {
         s = s.replaceAll(" *\n *", "\n");                    // dọn space sát newline
         s = s.replaceAll(" {2,}", " ");                      // gộp space thừa trong một dòng
         return s;
+    }
+
+    public static String wrapBareInlineMath(String s) {
+        if (s == null || s.isEmpty()) return s;
+
+        // 1) Bảo vệ khối toán
+        List<String> stash = new ArrayList<>();
+        Matcher env = P_MATH_ENV.matcher(s);
+        StringBuffer sb = new StringBuffer();
+        while (env.find()) {
+            String token = env.group();
+            String key = "\uE100" + stash.size() + "\uE101";
+            stash.add(token);
+            env.appendReplacement(sb, Matcher.quoteReplacement(key));
+        }
+        env.appendTail(sb);
+        String outside = sb.toString();
+
+        // 2) Chỉ bọc *ngoài* khối toán
+        Matcher m = P_BARE_LTX_TOKEN.matcher(outside);
+        StringBuffer out2 = new StringBuffer();
+        while (m.find()) {
+            m.appendReplacement(out2, Matcher.quoteReplacement("\\(" + m.group() + "\\)"));
+        }
+        m.appendTail(out2);
+
+        // 3) Khôi phục
+        String res = out2.toString();
+        for (int i = 0; i < stash.size(); i++) {
+            res = res.replace("\uE100" + i + "\uE101", stash.get(i));
+        }
+        return res;
     }
 }

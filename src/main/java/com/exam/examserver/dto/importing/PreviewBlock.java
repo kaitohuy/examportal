@@ -17,8 +17,10 @@ public class PreviewBlock {
     public String content;                // stem/content
     public String optionA, optionB, optionC, optionD;
     public String answer;                 // MC
-    public String answerText;             // Essay
+    public String answerText;
     public Set<QuestionLabel> labels;
-    public List<Integer> imageIndexes = new ArrayList<>(); // tham chiếu image list trong session
+    public List<Integer> imageIndexes = new ArrayList<>();
     public List<String> warnings = new ArrayList<>();
+    public Double duplicateScore;
+    public List<Long> duplicateOfIds;
 }

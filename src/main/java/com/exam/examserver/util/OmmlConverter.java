@@ -5,6 +5,13 @@ import org.w3c.dom.*;
 
 import jakarta.xml.bind.JAXBElement;
 import javax.xml.namespace.QName;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import static com.exam.examserver.util.ImportRegex.*;
 
 /**
  * Chuyển OMML (Office Math) -> LaTeX (kèm delimiter).
@@ -86,6 +93,7 @@ public final class OmmlConverter {
         return "\\[" + latex + "\\]";
     }
 
+
     private static String walk(Node n) {
         if (n == null) return "";
         String ln = n.getLocalName() != null ? n.getLocalName() : n.getNodeName();
@@ -122,8 +130,8 @@ public final class OmmlConverter {
             case "f": case "m:f": {
                 Node num = child(n, "num");
                 Node den = child(n, "den");
-                String a = walkChildren(num).trim();
-                String b = walkChildren(den).trim();
+                String a = normInline(walkChildren(num).trim());
+                String b = normInline(walkChildren(den).trim());
                 return wrapInline("\\frac{" + a + "}{" + b + "}");
             }
 
@@ -131,8 +139,8 @@ public final class OmmlConverter {
             case "rad": case "m:rad": {
                 Node deg = child(n,"deg");
                 Node e   = child(n,"e");
-                String body = walkChildren(e);
-                String d = (deg == null) ? "" : walkChildren(deg).trim();
+                String body = normInline(walkChildren(e));
+                String d = (deg == null) ? "" : normInline(walkChildren(deg).trim());
 
                 if (d.isEmpty() || "2".equals(d)) {
                     return wrapInline("\\sqrt{" + body + "}");
@@ -142,13 +150,24 @@ public final class OmmlConverter {
 
             /* super/sub */
             case "sSup": case "m:sSup":
-                return wrapInline(walkChildren(child(n,"e")) + "^{" + walkChildren(child(n,"sup")) + "}");
+                return wrapInline(
+                        normInline(walkChildren(child(n,"e")))
+                                + "^{"
+                                + normInline(walkChildren(child(n,"sup")))
+                                + "}"
+                );
             case "sSub": case "m:sSub":
-                return wrapInline(walkChildren(child(n,"e")) + "_{" + walkChildren(child(n,"sub")) + "}");
+                return wrapInline(
+                        normInline(walkChildren(child(n,"e")))
+                                + "_{"
+                                + normInline(walkChildren(child(n,"sub")))
+                                + "}"
+                );
             case "sSubSup": case "m:sSubSup":
                 return wrapInline(
-                        walkChildren(child(n,"e")) + "_{" + walkChildren(child(n,"sub")) + "}^{"
-                                + walkChildren(child(n,"sup")) + "}"
+                        normInline(walkChildren(child(n,"e")))
+                                + "_{" + normInline(walkChildren(child(n,"sub"))) + "}"
+                                + "^{" + normInline(walkChildren(child(n,"sup"))) + "}"
                 );
 
             /* delimiter (cases, ngoặc lớn) */
@@ -169,13 +188,13 @@ public final class OmmlConverter {
                             Node k = kids.item(i);
                             String ln2 = k.getLocalName();
                             if ("e".equals(ln2)) {
-                                String line = walkChildren(k).trim();
+                                String line = normInline(walkChildren(k).trim()); // bóc \( \) / \[ \]
                                 if (!line.isEmpty()) lines.add(line);
                             }
                         }
                     } else {
                         for (String ln3 : inside.split("\\R+")) {
-                            String s = ln3.trim();
+                            String s = normInline(ln3.trim()); // bóc \( \) / \[ \]
                             if (!s.isEmpty()) lines.add(s);
                         }
                     }
@@ -183,22 +202,22 @@ public final class OmmlConverter {
                     return wrapDisplay("\\begin{cases} " + joined + " \\end{cases}");
                 }
 
-                // các delimiter khác: trả inline cho đơn giản (hoặc có thể giữ nguyên)
+                // các delimiter khác: trả inline cho đơn giản (bóc trước để tránh lồng)
                 if ((beg == null || beg.isEmpty()) && (end == null || end.isEmpty())) {
-                    return wrapInline(inside);
+                    return wrapInline(normInline(inside));
                 }
                 if (beg == null || beg.isEmpty()) beg = "(";
                 if (end == null || end.isEmpty()) end = ")";
-                return wrapInline(beg + inside + end);
+                return wrapInline(beg + normInline(inside) + end);
             }
 
             /* n-ary (sum/prod/int) */
             case "nary": case "m:nary": {
                 String op = symbolFromNary(n);
                 String latexOp = op.equals("∑") ? "\\sum" : op.equals("∏") ? "\\prod" : "\\int";
-                String lo = walkChildren(child(n,"sub"));
-                String hi = walkChildren(child(n,"sup"));
-                String e  = walkChildren(child(n,"e"));
+                String lo = normInline(walkChildren(child(n,"sub")));
+                String hi = normInline(walkChildren(child(n,"sup")));
+                String e  = normInline(walkChildren(child(n,"e")));
                 return wrapInline(latexOp
                         + (lo.isBlank() ? "" : "_{" + lo + "}")
                         + (hi.isBlank() ? "" : "^{" + hi + "}")
@@ -207,17 +226,19 @@ public final class OmmlConverter {
 
             /* bar/box/group */
             case "bar": case "m:bar":
-                return wrapInline("\\overline{" + walkChildren(child(n,"e")) + "}");
+                return wrapInline("\\overline{" + normInline(walkChildren(child(n,"e"))) + "}");
             case "groupChr": case "m:groupChr":
             case "box": case "m:box":
                 // bao ngoài bằng ngoặc thường
-                return wrapInline("(" + walkChildren(child(n,"e")) + ")");
+                return wrapInline("(" + normInline(walkChildren(child(n,"e"))) + ")");
 
             /* limit */
             case "limLow": case "m:limLow":
-                return wrapInline("\\lim_{" + walkChildren(child(n,"lim")) + "} " + walkChildren(child(n,"e")));
+                return wrapInline("\\lim_{" + normInline(walkChildren(child(n,"lim")))
+                        + "} " + normInline(walkChildren(child(n,"e"))));
             case "limUpp": case "m:limUpp":
-                return wrapInline("\\lim^{" + walkChildren(child(n,"lim")) + "} " + walkChildren(child(n,"e")));
+                return wrapInline("\\lim^{" + normInline(walkChildren(child(n,"lim")))
+                        + "} " + normInline(walkChildren(child(n,"e"))));
 
             default:
                 return walkChildren(n);
@@ -263,5 +284,46 @@ public final class OmmlConverter {
             }
         }
         return "∑";
+    }
+
+    /* ===== helpers: strip nested math delims ===== */
+    private static String stripInlineMathDelims(String s) {
+        if (s == null) return null;
+        s = s.replaceAll("\\\\\\((.*?)\\\\\\)", "$1");
+        s = s.replaceAll("\\\\\\[(.*?)\\\\\\]", "$1");
+        return s;
+    }
+
+    private static String normInline(String s) {
+        if (s == null) return null;
+        s = stripInlineMathDelims(s).trim();
+
+        // 1) Bảo vệ group LaTeX hợp lệ bằng placeholder
+        List<String> stash = new ArrayList<>();
+        s = protectGroups(s, P_CMD_GROUP, stash);
+        s = protectGroups(s, P_SUP_GROUP, stash);
+        s = protectGroups(s, P_SUB_GROUP, stash);
+
+        // 2) Chỉ escape ngoặc tập hợp số
+        s = s.replaceAll("(?<![_^\\\\\\p{L}])\\{\\s*([0-9,\\s]+)\\s*\\}(?!\\p{L})", "\\\\{$1\\\\}");
+
+        // 3) Khôi phục
+        for (int i = 0; i < stash.size(); i++) {
+            s = s.replace("\uE000" + i + "\uE001", stash.get(i));
+        }
+        return s;
+    }
+
+    private static String protectGroups(String s, Pattern p, List<String> stash) {
+        Matcher m = p.matcher(s);
+        StringBuffer out = new StringBuffer();
+        while (m.find()) {
+            String token = m.group();
+            String key = "\uE000" + stash.size() + "\uE001"; // placeholder PUA
+            stash.add(token);
+            m.appendReplacement(out, Matcher.quoteReplacement(key));
+        }
+        m.appendTail(out);
+        return out.toString();
     }
 }

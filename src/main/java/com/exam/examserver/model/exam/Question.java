@@ -88,12 +88,20 @@ public class Question {
 
     private LocalDateTime createdAt;
 
-    @OneToMany(mappedBy = "question", fetch = FetchType.LAZY, cascade = CascadeType.ALL)
+    @OneToMany(mappedBy = "question", fetch = FetchType.LAZY, cascade = CascadeType.ALL, orphanRemoval = true)
     private Set<QuizQuestion> quizQuestions = new HashSet<>();
 
     @JsonIgnore
     @OneToMany(mappedBy = "parent", cascade = CascadeType.REMOVE, orphanRemoval = true)
     private List<Question> clones = new ArrayList<>();
+
+    public List<Question> getClones() {
+        return clones;
+    }
+
+    public void setClones(List<Question> clones) {
+        this.clones = clones;
+    }
 
     public QuestionType getQuestionType() {
         return questionType;

@@ -320,9 +320,19 @@ public class DocxOmmlExtractor {
             for (Object child : childrenOf(r)) traverseNode(child, tmp, images, mdp);
 
             String text = tmp.toString();
-            // >>> NEW: phát hiện sub/sup ở rPr.vertAlign <<<
             if (rpr != null && rpr.getVertAlign() != null && rpr.getVertAlign().getVal() != null) {
-                String vagn = rpr.getVertAlign().getVal().value(); // "baseline" | "subscript" | "superscript"
+                String vagn = rpr.getVertAlign().getVal().value(); // baseline | subscript | superscript
+                String payload = text
+                        .replace("\u200B","").replace("\u200C","").replace("\u200D","")
+                        .replace("\uFEFF","").trim();
+                if (payload.isEmpty() || payload.matches("[,.;:!?\\-]+")) {
+                    // cứ đẩy nguyên văn (để giữ dấu phẩy) và thoát nhánh
+                    if (!text.isEmpty()) {
+                        if (emph) sb.append("{hl}").append(text).append("{/hl}");
+                        else sb.append(text);
+                    }
+                    return;
+                }
                 if ("subscript".equalsIgnoreCase(vagn))      text = "_{" + text + "}";
                 else if ("superscript".equalsIgnoreCase(vagn)) text = "^{" + text + "}";
             }
@@ -331,6 +341,7 @@ public class DocxOmmlExtractor {
                 if (emph) sb.append("{hl}").append(text).append("{/hl}");
                 else sb.append(text);
             }
+
             return;
         }
 
