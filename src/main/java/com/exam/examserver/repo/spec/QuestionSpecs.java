@@ -1,9 +1,11 @@
 package com.exam.examserver.repo.spec;
 
 import com.exam.examserver.enums.Difficulty;
+import com.exam.examserver.enums.IssueStatus;
 import com.exam.examserver.enums.QuestionLabel;
 import com.exam.examserver.enums.QuestionType;
 import com.exam.examserver.model.exam.Question;
+import com.exam.examserver.model.exam.QuestionIssue;
 import jakarta.persistence.criteria.*;
 import org.springframework.data.jpa.domain.Specification;
 
@@ -80,4 +82,25 @@ public final class QuestionSpecs {
             );
         };
     }
+    public static Specification<Question> flagged(Boolean flagged) {
+        if (flagged == null) return Specification.where(null);
+        return (root, query, cb) -> {
+            // subquery: select 1 from question_issue qi where qi.question.id = question.id and qi.status = 'OPEN'
+            var sub = query.subquery(Long.class);
+            var qi = sub.from(QuestionIssue.class);
+            var statusPath = qi.get("status");
+            sub.select(cb.literal(1L))
+                    .where(
+                            cb.equal(qi.get("question").get("id"), root.get("id")),
+                            cb.equal(statusPath, IssueStatus.OPEN)
+                    );
+
+            if (flagged) {
+                return cb.exists(sub);          // chỉ câu có issue OPEN
+            } else {
+                return cb.not(cb.exists(sub));  // chỉ câu không có issue OPEN
+            }
+        };
+    }
+
 }

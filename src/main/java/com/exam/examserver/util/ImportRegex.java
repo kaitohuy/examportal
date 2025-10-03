@@ -134,6 +134,17 @@ public final class ImportRegex {
                     ")\\b"
     );
 
+    private static final Pattern P_NUM_CODE_HEAD = Pattern.compile(
+            "^\\s*(?:\\{/?hl\\}\\s*)*(" + NUM_ANY + ")\\s*(?:\\{/?hl\\}\\s*)*[\\.)\\-:]?\\s+",
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE | Pattern.MULTILINE
+    );
+
+    public static String extractNumericTypeCode(String block) {
+        if (block == null) return null;
+        var m = P_NUM_CODE_HEAD.matcher(block);
+        return m.find() ? m.group(1) : null;   // ví dụ "2", "2.1", "2.1.1"
+    }
+
     private static String smartBreakNumericHeaders(String s) {
         if (s == null || s.isEmpty()) return s;
         StringBuilder out = new StringBuilder(s.length());
@@ -154,6 +165,14 @@ public final class ImportRegex {
         }
         return out.toString();
     }
+
+    // Header "Câu n ..." ở đầu block -> bỏ (giữ nguyên)
+    public static final Pattern P_HEADER_LINE = Pattern.compile(
+            "(?mi)^\\s*C(?:âu|au)\\s*\\d+\\b.*(?:\\R|\\z)"
+    );
+
+    public static final Pattern P_SUBITEM_HEADER =
+            Pattern.compile("(?mi)^\\s*(?:\\(\\s*([a-dA-D])\\s*\\)|([a-dA-D])\\s*[\\)\\.:])\\s*");
 
     public static String breakHeaderAnswerInline(String s) {
         if (s == null) return null;
@@ -223,4 +242,40 @@ public final class ImportRegex {
     // Token inline trần: base + (_{...}|^{...})+
     public static final Pattern P_BARE_LTX_TOKEN =
             Pattern.compile("([\\p{L}\\p{N}\\)\\]\\}])(?:_(\\{[^}]+\\})|\\^(\\{[^}]+\\}))+");
+
+    public static String stripNumericCodeHead(String s) {
+        if (s == null) return null;
+        return P_NUM_CODE_HEAD.matcher(s).replaceFirst("");
+    }
+
+    /** Làm sạch STEM:
+     *  - bỏ mã mục đầu (1., 1.2, 2.2.8 ...)
+     *  - bỏ dấu phân cách đầu/cuối (: . ) -) thừa
+     *  - nén khoảng trắng nhẹ, giữ newline và ký hiệu toán
+     */
+    // ImportRegex.java
+    public static String normalizeStem(String s) {
+        if (s == null) return null;
+
+        // 0) bóc {hl}, dọn khoảng trắng nhưng giữ newline
+        String t = stripInlineMarkers(TextNormalize.normalizePreserveNewlines(s));
+
+        // 1) Nếu CHỈ là mã số (ví dụ "2.1.1." hoặc "2.1.1" hoặc "{hl}2.1{hl}"), coi như KHÔNG có đề chung
+        //    (case này trước khi strip để bắt cả chuỗi "trần")
+        String onlyNumRegex = "^\\s*(?:\\{/?hl\\}\\s*)?" + NUM_ANY + "(?:\\s*(?:\\{/?hl\\}\\s*)*[\\.)\\-:]?)?\\s*$";
+        if (t.matches(onlyNumRegex)) return null;
+
+        // 2) Bỏ mã số đầu dòng (có thể có dấu ngăn & khoảng trắng sau)
+        t = P_NUM_CODE_HEAD.matcher(t).replaceFirst("");
+
+        // 3) Bỏ dấu ":" thừa đầu/cuối, nén khoảng trắng
+        t = t.replaceFirst("^\\s*[:]\\s*", "")
+                .replaceFirst("\\s*[:]\\s*$", "")
+                .replaceAll("\\s{2,}", " ")
+                .trim();
+
+        // 4) Sau khi rửa mà rỗng -> không lưu
+        return t.isBlank() ? null : t;
+    }
+
 }

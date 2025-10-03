@@ -1,7 +1,12 @@
 package com.exam.examserver.service.import_export;
 
+import com.exam.examserver.dto.autogen.AutoGenPreviewResponse;
+import com.exam.examserver.dto.autogen.AutoGenRowDTO;
 import com.exam.examserver.dto.exam.QuestionDTO;
 import com.exam.examserver.enums.QuestionType;
+import com.exam.examserver.model.exam.QuestionMeta;
+import com.exam.examserver.repo.QuestionMetaRepository;
+import com.exam.examserver.service.BundleService;
 import com.exam.examserver.service.QuestionService;
 import com.exam.examserver.util.TextNormalize;
 import org.apache.poi.util.Units;
@@ -29,13 +34,16 @@ import org.apache.poi.xwpf.usermodel.ParagraphAlignment;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.net.URL;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
+import static com.exam.examserver.util.ImportRegex.normalizeStem;
 import static com.exam.examserver.util.MathOmmlRenderer.splitTopLevel;
 import static com.exam.examserver.util.MathOmmlRenderer.emitMathAware;
 
@@ -43,6 +51,8 @@ import static com.exam.examserver.util.MathOmmlRenderer.emitMathAware;
 public class ExportQuestionService {
 
     private final QuestionService questionService;
+    private final BundleService bundleService;
+    private final QuestionMetaRepository metaRepo;
 
     private static final String FONT_TEXT = "src/main/resources/fonts/NotoSans-Regular.ttf";
     private static final String FONT_MATH = "src/main/resources/fonts/NotoSansMath-Regular.ttf";
@@ -71,8 +81,10 @@ public class ExportQuestionService {
     ) {}
 
 
-    public ExportQuestionService(QuestionService questionService) {
+    public ExportQuestionService(QuestionService questionService, BundleService bundleService, QuestionMetaRepository metaRepo) {
         this.questionService = questionService;
+        this.bundleService = bundleService;
+        this.metaRepo = metaRepo;
     }
 
     /* ==================== PDF ==================== */
@@ -376,6 +388,7 @@ public class ExportQuestionService {
                                                 boolean includeAnswers,
                                                 PracticeHeader header) throws IOException {
         List<QuestionDTO> questions = questionService.findByIds(questionIds);
+        Map<Long,String> stemMap = loadBundleStemsForQuestions(questionIds);
         if (questions.isEmpty()) throw new IllegalStateException("No questions found for IDs: " + questionIds);
 
         try (XWPFDocument doc = new XWPFDocument();
@@ -405,10 +418,13 @@ public class ExportQuestionService {
                 } else {
                     title = "Câu " + (++globalIdx);
                 }
-                writeQuestionTitle(doc, title);
-
-                // Nội dung: tách dòng, text TNR13; OMML Cambria Math 13; sqrt ẩn bậc căn
                 String content = prettyMathSpaces(safeText(q.getContent()));
+                String stem = stemMap.get(q.getId());
+                if (stem != null && !stem.isBlank()) {
+                    // chèn đầu mỗi ý khi export
+                    content = stem + "\n" + content;
+                }
+                writeQuestionTitle(doc, title);
                 writeContentSmart(doc, content);
 
                 // Ảnh
@@ -441,11 +457,21 @@ public class ExportQuestionService {
         }
     }
 
+    // Thêm một helper (dùng repo/dao hiện có; nếu chưa có, thêm method tối giản vào BundleService/Repository)
+    private Map<Long, String> loadBundleStemsForQuestions(List<Long> qids) {
+        return bundleService.findInstructionsByQuestionIds(qids);
+    }
+
     // QuestionExportService.java  (thêm mới)
     public byte[] exportQuestionsToWordExam(List<Long> questionIds,
                                             boolean includeAnswers,
                                             ExamHeader header) throws IOException {
         List<QuestionDTO> questions = questionService.findByIds(questionIds);
+        Map<Long,String> stemMap = loadBundleStemsForQuestions(questionIds);
+        System.out.println("[EXPORT] stems found: " + stemMap.size()
+                + " / " + questionIds.size() + " ids. Example: " +
+                stemMap.entrySet().stream().limit(5).toList());
+
         if (questions.isEmpty()) throw new IllegalStateException("No questions found for IDs: " + questionIds);
 
         try (XWPFDocument doc = new XWPFDocument();
@@ -460,6 +486,11 @@ public class ExportQuestionService {
                 writeQuestionTitle(doc, "Câu " + (++idx));
 
                 String content = prettyMathSpaces(safeText(q.getContent()));
+                String stem = stemMap.get(q.getId());
+                if (stem != null && !stem.isBlank()) {
+                    // chèn đầu mỗi ý khi export
+                    content = stem + "\n" + content;
+                }
                 writeContentSmart(doc, content);
 
                 if (q.getImages() != null && !q.getImages().isEmpty()) {
@@ -811,12 +842,27 @@ public class ExportQuestionService {
 
     // writeContentSmart / writeOptionIfPresent giữ nguyên logic cũ,
     // CHỈ lưu ý: runFactory set TNR 13 để đồng bộ
+//    private void writeContentSmart(XWPFDocument doc, String text) {
+//        if (text == null) text = "";
+//        for (String line : text.split("\\R", -1)) {
+//            XWPFParagraph p = doc.createParagraph();
+//            tuneParagraphSpacing(p);
+//            emitMathAware(p, line, (s) -> {
+//                XWPFRun r = p.createRun();
+//                r.setFontFamily("Times New Roman");
+//                r.setFontSize(13);
+//                return r;
+//            });
+//        }
+//    }
+
     private void writeContentSmart(XWPFDocument doc, String text) {
         if (text == null) text = "";
-        for (String line : text.split("\\R", -1)) {
+        // CHỐT: gom các khối toán nhiều dòng thành 1 chunk
+        for (String chunk : com.exam.examserver.util.MathOmmlRenderer.chunkByMathBlocks(text)) {
             XWPFParagraph p = doc.createParagraph();
             tuneParagraphSpacing(p);
-            emitMathAware(p, line, (s) -> {
+            emitMathAware(p, chunk, (s) -> {
                 XWPFRun r = p.createRun();
                 r.setFontFamily("Times New Roman");
                 r.setFontSize(13);
@@ -912,4 +958,171 @@ public class ExportQuestionService {
 
         return s;
     }
+
+    public byte[] exportExamFromBlueprint(
+            List<List<Long>> rowsIds, // mỗi phần tử = ID(s) của 1 "Câu"
+            ExamHeader header) throws IOException {
+
+        List<Long> allIds = rowsIds.stream().flatMap(List::stream).toList();
+        Map<Long, QuestionDTO> qById = questionService.findByIds(allIds)
+                .stream().collect(Collectors.toMap(QuestionDTO::getId, q -> q));
+        Map<Long, String> stemMap = bundleService.findInstructionsByQuestionIds(allIds);
+
+        try (XWPFDocument doc = new XWPFDocument();
+             ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+
+            // Header đề thi
+            writeExamHeader(doc, header);
+
+            // 2) Render từng hàng (“Câu i”)
+            for (int i = 0; i < rowsIds.size(); i++) {
+                List<Long> subIds = rowsIds.get(i);
+                if (subIds == null || subIds.isEmpty()) continue;
+
+                BigDecimal totalPts = sumPointsOfQuestions(subIds);
+                String ptsText = (totalPts != null && totalPts.compareTo(BigDecimal.ZERO) > 0)
+                        ? " (" + fmtPoints(totalPts) + " điểm)" : "";
+
+                writeQuestionTitle(doc, "Câu " + (i + 1) + ptsText);
+
+                // chỉ lấy stem nếu có >= 2 ý
+                String stemClean = null;
+                if (subIds.size() >= 2) {
+                    String stemRaw = stemMap.get(subIds.get(0));
+                    if (stemRaw != null && !stemRaw.isBlank()) {
+                        stemClean = normalizeStem(stemRaw); // đã loại "1.1", "2.1.7", dấu :
+                    }
+                }
+                final boolean hasStem = (stemClean != null && !stemClean.isBlank());
+
+                char mark = 'a';
+                for (int j = 0; j < subIds.size(); j++) {
+                    Long qid = subIds.get(j);
+                    QuestionDTO q = qById.get(qid);
+                    if (q == null) continue;
+
+                    boolean multi = subIds.size() > 1;
+                    String content = prettyMathSpaces(safeText(q.getContent()));
+
+                    if (multi && j == 0 && hasStem) {
+                        // Dòng 1: "a) <stem>" (trái)
+                        writeContentSmart(doc, "a) " + stemClean);
+                        // Dòng 2: nội dung ý a) căn giữa (không lặp lại "a) ")
+                        writeContentSmartAligned(doc, content, ParagraphAlignment.CENTER);
+                    } else {
+                        // Ý đơn hoặc b), c), d) ...
+                        String prefix = multi ? (mark++ + ") ") : "";
+                        writeContentSmart(doc, prefix + content);
+                    }
+
+                    // Ảnh (giữ nguyên)
+                    if (q.getImages() != null && !q.getImages().isEmpty()) {
+                        for (var img : q.getImages()) addWordImage(doc, img.getUrl());
+                    } else if (q.getImageUrl() != null) {
+                        addWordImage(doc, q.getImageUrl());
+                    }
+
+                    // MCQ (giữ nguyên)
+                    if (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE) {
+                        String pad = (multi ? "   " : "");
+                        writeOptionIfPresent(doc, pad + "a) ", q.getOptionA());
+                        writeOptionIfPresent(doc, pad + "b) ", q.getOptionB());
+                        writeOptionIfPresent(doc, pad + "c) ", q.getOptionC());
+                        writeOptionIfPresent(doc, pad + "d) ", q.getOptionD());
+                    }
+                }
+                doc.createParagraph(); // khoảng cách giữa câu
+            }
+
+            // Footer
+            writeExamFooter(doc);
+
+            doc.write(baos);
+            return baos.toByteArray();
+        }
+    }
+
+    public byte[] exportMatrixDocx(AutoGenPreviewResponse resp) throws IOException {
+        try (XWPFDocument doc = new XWPFDocument();
+             ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+
+            // Title
+            XWPFParagraph t = doc.createParagraph();
+            t.setAlignment(ParagraphAlignment.CENTER);
+            XWPFRun rt = t.createRun();
+            rt.setBold(true);
+            rt.setFontSize(16);
+            rt.setText("MA TRẬN ĐỀ THI");
+
+            int N = Math.max(0, resp.variants);
+            int R = (resp.rows == null ? 0 : resp.rows.size());
+
+            // Bảng: header + R dòng nội dung + tổng điểm
+            XWPFTable tbl = doc.createTable(R + 2, N + 1);
+            tbl.setWidth("100%");
+
+            // Header
+            tbl.getRow(0).getCell(0).setText("Cấu trúc (Bắt buộc theo Ma trận)");
+            for (int k = 0; k < N; k++) {
+                tbl.getRow(0).getCell(k + 1).setText("Đề " + (k + 1));
+            }
+
+            // Body
+            for (int r = 0; r < R; r++) {
+                AutoGenRowDTO row = resp.rows.get(r);
+                String title = (row.title == null || row.title.isBlank()) ? ("Câu " + (r + 1)) : row.title;
+                tbl.getRow(r + 1).getCell(0).setText(title);
+
+                for (int k = 0; k < N; k++) {
+                    var cell = row.columns.get(k);
+                    String ids = (cell == null || cell.questionIds == null || cell.questionIds.isEmpty())
+                            ? ""
+                            : cell.questionIds.stream().map(String::valueOf)
+                            .collect(Collectors.joining(" "));
+                    tbl.getRow(r + 1).getCell(k + 1).setText(ids);
+                }
+            }
+
+            // Totals
+            tbl.getRow(R + 1).getCell(0).setText("TỔNG ĐIỂM");
+            for (int k = 0; k < N; k++) {
+                String tp = "0.00";
+                if (resp.paperTotals != null && resp.paperTotals.length > k && resp.paperTotals[k] != null) {
+                    tp = resp.paperTotals[k].toPlainString();
+                }
+                tbl.getRow(R + 1).getCell(k + 1).setText(tp);
+            }
+
+            doc.write(baos);
+            return baos.toByteArray();
+        }
+    }
+
+    // Đặt trong ExportQuestionService
+    private void writeContentSmartAligned(XWPFDocument doc, String text, ParagraphAlignment align) {
+        if (text == null || text.isBlank()) return;
+        int before = doc.getParagraphs().size();
+        writeContentSmart(doc, text);                 // vẫn dùng pipeline cũ => LaTeX ok
+        var paras = doc.getParagraphs();
+        for (int i = before; i < paras.size(); i++) { // đổi alignment cho các paragraph vừa thêm
+            paras.get(i).setAlignment(align);
+        }
+    }
+
+    // ===== helpers cho điểm (đặt trong ExportQuestionService) =====
+    private BigDecimal sumPointsOfQuestions(List<Long> qids) {
+        if (qids == null || qids.isEmpty()) return BigDecimal.ZERO;
+        // lấy meta theo id và cộng points (null => 0)
+        return metaRepo.findAllById(qids).stream()
+                .map(QuestionMeta::getPoints)
+                .map(p -> p == null ? BigDecimal.ZERO : p)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private static String fmtPoints(BigDecimal x) {
+        if (x == null) return null;
+        x = x.stripTrailingZeros();
+        return x.toPlainString(); // "2" thay vì "2.00"
+    }
+
 }

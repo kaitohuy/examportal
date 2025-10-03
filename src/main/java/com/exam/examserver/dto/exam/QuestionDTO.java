@@ -25,12 +25,20 @@ public class QuestionDTO {
     private String imageUrl; // Cho câu hỏi hình ảnh
     private LocalDateTime createdAt;
     private UserBasicDTO createdBy;
-
+    private Boolean flagged;
     private Set<QuestionLabel> labels;
     private List<QuestionImageDTO> images;
 
     private Long parentId;
     private Integer cloneIndex;
+
+    public Boolean getFlagged() {
+        return flagged;
+    }
+
+    public void setFlagged(Boolean flagged) {
+        this.flagged = flagged;
+    }
 
     public String getAnswer() {
         return answer;

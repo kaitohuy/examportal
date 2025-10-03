@@ -17,6 +17,15 @@ public class QuestionFilter {
     private LocalDateTime from;
     private LocalDateTime to;
     private String q;
+    private Boolean flagged;
+
+    public Boolean getFlagged() {
+        return flagged;
+    }
+
+    public void setFlagged(Boolean flagged) {
+        this.flagged = flagged;
+    }
 
     public Set<QuestionLabel> getLabels() {
         return labels;

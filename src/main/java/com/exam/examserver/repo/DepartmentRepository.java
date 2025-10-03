@@ -15,6 +15,6 @@ public interface DepartmentRepository extends JpaRepository<Department, Long> {
     Optional<Department> findByHeadUser_Id(Long userId);
     @Query("select count(d) from Department d where d.headUser is null")
     long countWithoutHead();
-
+    boolean existsByHeadUser_Id(Long headUserId);
 }
 

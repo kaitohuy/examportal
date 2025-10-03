@@ -30,7 +30,14 @@ public final class MathOmmlRenderer {
     private static final Pattern P_INT = Pattern.compile("int_\\{(.+?)\\}\\^\\{(.+?)\\}\\((.+?)\\)");
     private static final Pattern P_LOGBASE = Pattern.compile("log_\\{(.+?)\\}\\((.+?)\\)");
     private static final Pattern L_LOGB = Pattern.compile("\\\\log_\\{(.+?)\\}\\{?\\(?(.+?)\\)?\\}?");
-
+    private static final Pattern L_MATRIX_ENV =
+            Pattern.compile("\\\\begin\\{(p|b|B|v|V)matrix\\}([\\s\\S]*?)\\\\end\\{\\1matrix\\}");
+    // Gom các khối toán nhiều dòng để không bị cắt ra nhiều paragraph
+    private static final Pattern P_MATH_BLOCK = Pattern.compile("(?s)"
+            + "\\$\\$.*?\\$\\$"                                         // $$ ... $$
+            + "|\\\\\\[.*?\\\\\\]"                                      // \[ ... \]
+            + "|\\\\begin\\{(p|b|B|v|V)matrix\\}.*?\\\\end\\{\\1matrix\\}" // matrix env
+            + "|\\\\begin\\{cases\\}.*?\\\\end\\{cases\\}");            // cases
     // ------- LaTeX mới -------
     private static final Pattern L_FRAC = Pattern.compile("\\\\frac\\{(.+?)\\}\\{(.+?)\\}");
     private static final Pattern L_SQRT = Pattern.compile("\\\\sqrt\\{(.+?)\\}");
@@ -40,6 +47,22 @@ public final class MathOmmlRenderer {
     private static final Pattern L_PROD = Pattern.compile("\\\\prod(?:_\\{(.+?)\\})?(?:\\^\\{(.+?)\\})?\\s*([^\\\\].+?)");
     private static final Pattern L_INT = Pattern.compile("\\\\int(?:_\\{(.+?)\\})?(?:\\^\\{(.+?)\\})?\\s*([^\\\\].+?)");
     private static final Pattern L_CASES = Pattern.compile("\\\\begin\\{cases\\}([\\s\\S]*?)\\\\end\\{cases\\}");
+    // \{ ... \}
+    private static final Pattern L_SET_BRACES =
+            Pattern.compile("\\\\\\{\\s*([^{}]+?)\\s*\\\\\\\\}");
+
+    // (tuỳ chọn) \lbrace ... \rbrace
+    private static final Pattern L_SET_LRBRACE =
+            Pattern.compile("\\\\lbrace\\s*([^{}]+?)\\s*\\\\rbrace");
+    // Delimiter đơn giản: { body } hoặc ( body ), [ body ], ...
+    private static String ommlDelim(String left, String right, String body) {
+        return "<m:oMath xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\">"
+                + "  <m:d>"
+                + "    <m:dPr><m:begChr m:val=\"" + xml(left) + "\"/><m:endChr m:val=\"" + xml(right) + "\"/></m:dPr>"
+                + "    <m:e>" + toOmmlInlineSeq(body) + "</m:e>"
+                + "  </m:d>"
+                + "</m:oMath>";
+    }
 
     /**
      * Render 1 dòng: chèn OMML cho phần match, phần còn lại là text thường (giữ style).
@@ -51,7 +74,11 @@ public final class MathOmmlRenderer {
             return;
         }
 
-        if (!text.matches("(?s).*(?:\\\\(?:frac|sqrt|overline|sum|prod|int|log|text\\{)"
+        // Thay cả biểu thức ở if(...) bằng phiên bản có matrix & cases:
+        if (!text.matches("(?s).*(?:"
+                + "\\\\begin\\{(?:p|b|B|v|V)matrix\\}"     // <— NEW
+                + "|\\\\begin\\{cases\\}"                  // <— (nếu muốn)
+                + "|\\\\(?:frac|sqrt|overline|sum|prod|int|log|text\\{)"
                 + "|\\\\(?:\\(|\\)|\\[|\\])"
                 + "|\\$\\$?"
                 + "|cases\\("
@@ -67,6 +94,7 @@ public final class MathOmmlRenderer {
             return;
         }
 
+
         String s = text;
 
         // 0) Gỡ delimiter nhẹ: \( \) \[ \] $$ $
@@ -76,6 +104,20 @@ public final class MathOmmlRenderer {
                 .replaceAll("\\\\\\]", "")
                 .replaceAll("\\$\\$", "")
                 .replaceAll("\\$", "");
+
+        // 1A) LaTeX matrix environments (pmatrix/bmatrix/Bmatrix/vmatrix/Vmatrix)
+        s = replaceWithOmml(p, s, L_MATRIX_ENV, m -> {
+            String kind = m.group(1); // p|b|B|v|V
+            String body = m.group(2);
+            switch (kind) {
+                case "p":  return ommlMatrix(body, '(', ')');          // pmatrix -> ( )
+                case "b":  return ommlMatrix(body, '[', ']');          // bmatrix -> [ ]
+                case "B":  return ommlMatrix(body, '{', '}');          // Bmatrix -> { }
+                case "v":  return ommlMatrix(body, '|', '|');          // vmatrix -> | |
+                case "V":  return ommlMatrix(body, '‖', '‖');          // Vmatrix -> ‖ ‖
+                default:   return ommlMatrix(body, '(', ')');
+            }
+        }, runFactory);
 
         // 1) LaTeX blocks trước (cases, sqrt/root, frac, overline, n-ary)
         s = replaceWithOmml(p, s, L_CASES, m -> {
@@ -108,6 +150,15 @@ public final class MathOmmlRenderer {
             String lo = nz(m.group(1)), hi = nz(m.group(2)), e = nz(m.group(3));
             return ommlNary("∫", renderPlain(lo), renderPlain(hi), renderPlain(e));
         }, runFactory);
+
+        // \{ ... \}  => OMML delimiter { ... }
+        s = replaceWithOmml(p, s, L_SET_BRACES,
+                m -> ommlDelim("{", "}", m.group(1)), runFactory);
+
+        // (tuỳ chọn) \lbrace ... \rbrace => { ... }
+        s = replaceWithOmml(p, s, L_SET_LRBRACE,
+                m -> ommlDelim("{", "}", m.group(1)), runFactory);
+
 
         // 2) TeX-lite cũ (tương thích ngược)
         s = replaceCasesWithOmml(p, s, runFactory);
@@ -311,8 +362,18 @@ public final class MathOmmlRenderer {
     }
 
     private static String renderPlain(String inside) {
-        return inside == null ? "" : inside;
+        String t = inside == null ? "" : inside;
+        // map vài token phổ biến để Word hiển thị đúng
+        t = t.replace("\\infty","∞")
+                .replace("\\times","×")
+                .replace("\\cdot","·")
+                .replace("\\leq","≤")
+                .replace("\\geq","≥")
+                .replace("\\neq","≠")
+                .replace("\\pm","±");
+        return t;
     }
+
 
     private static String nz(String s) {
         return s == null ? "" : s;
@@ -350,7 +411,7 @@ public final class MathOmmlRenderer {
 
     private static void flushPlain(StringBuilder buf, StringBuilder out) {
         if (!buf.isEmpty()) {
-            out.append(mRun(buf.toString()));
+            out.append(mRun(renderPlain(buf.toString())));
             buf.setLength(0);
         }
     }
@@ -361,6 +422,29 @@ public final class MathOmmlRenderer {
         int i = 0, n = s.length();
 
         while (i < n) {
+            // --- NEW: \{ ... \} ---
+            if (i + 1 < n && s.charAt(i) == '\\' && s.charAt(i + 1) == '{') {
+                int j = s.indexOf("\\}", i + 2);   // tìm cặp đóng \}
+                if (j > 0) {
+                    flushPlain(text, out);
+                    String body = s.substring(i + 2, j).trim();
+                    out.append(stripOMath(ommlDelim("{", "}", body)));
+                    i = j + 2; // nhảy qua "\}"
+                    continue;
+                }
+            }
+            // --- (tuỳ chọn) \lbrace ... \rbrace ---
+            if (s.regionMatches(i, "\\lbrace", 0, 7)) {
+                int start = i + 7;
+                int k = s.indexOf("\\rbrace", start);
+                if (k > 0) {
+                    flushPlain(text, out);
+                    String body = s.substring(start, k).trim();
+                    out.append(stripOMath(ommlDelim("{", "}", body)));
+                    i = k + 7; // qua "\rbrace"
+                    continue;
+                }
+            }
             if (s.regionMatches(true, i, "overline(", 0, 9)) {
                 int j = findMatchingParen(s, i + 9);
                 if (j < 0) break;
@@ -471,5 +555,63 @@ public final class MathOmmlRenderer {
         }
         if (last < s.length()) rest.append(s.substring(last));
         return rest.toString();
+    }
+
+    // Generic matrix with delimiters: kind = p() | b[] | B{} | v|| | V‖‖
+    private static String ommlMatrix(String body, char leftDelim, char rightDelim) {
+        // tách dòng theo "\\\\", mỗi dòng tách cột theo "&"
+        String[] rowArr = body.trim().split("\\\\\\\\");
+        StringBuilder rows = new StringBuilder();
+        for (String r : rowArr) {
+            String[] cells = r.trim().split("&");
+            StringBuilder mr = new StringBuilder("<m:mr>");
+            for (String c : cells) {
+                String cell = c.trim();
+                String c2 = renderPlain(cell);
+                mr.append("<m:e>").append(toOmmlInlineSeq(c2)).append("</m:e>");            }
+            mr.append("</m:mr>");
+            rows.append(mr);
+        }
+
+        String left  = String.valueOf(leftDelim);
+        String right = String.valueOf(rightDelim);
+
+        return "<m:oMath xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\">"
+                + "  <m:d>"
+                + "    <m:dPr><m:begChr m:val=\"" + xml(left) + "\"/><m:endChr m:val=\"" + xml(right) + "\"/><m:grow m:val=\"1\"/></m:dPr>"
+                + "    <m:e>"
+                + "      <m:m><m:mPr><m:baseJc m:val=\"centerGroup\"/></m:mPr>"
+                +            rows
+                + "      </m:m>"
+                + "    </m:e>"
+                + "  </m:d>"
+                + "</m:oMath>";
+    }
+
+    public static List<String> chunkByMathBlocks(String s) {
+        List<String> out = new ArrayList<>();
+        if (s == null || s.isBlank()) return out;
+        Matcher m = P_MATH_BLOCK.matcher(s);
+        int last = 0;
+        while (m.find()) {
+            if (m.start() > last) {
+                // phần text thường: tách theo 2 newline để ra các đoạn
+                String head = s.substring(last, m.start());
+                for (String para : head.split("\\R{2,}")) {
+                    String t = para.trim();
+                    if (!t.isEmpty()) out.add(t);
+                }
+            }
+            // GIỮ NGUYÊN khối toán (đừng cắt theo \n)
+            out.add(s.substring(m.start(), m.end()));
+            last = m.end();
+        }
+        if (last < s.length()) {
+            for (String para : s.substring(last).split("\\R{2,}")) {
+                String t = para.trim();
+                if (!t.isEmpty()) out.add(t);
+            }
+        }
+        return out;
     }
 }

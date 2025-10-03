@@ -1,9 +1,11 @@
 package com.exam.examserver.controller;
 
+import com.exam.examserver.config.ScopeResolver;
 import com.exam.examserver.dto.importing.FileArchiveDTO;
 import com.exam.examserver.dto.importing.PageDTO;
 import com.exam.examserver.enums.ArchiveVariant;
 import com.exam.examserver.enums.ReviewStatus;
+import com.exam.examserver.enums.RoleType;
 import com.exam.examserver.model.exam.FileArchive;
 import com.exam.examserver.model.exam.Subject;
 import com.exam.examserver.model.user.User;
@@ -16,6 +18,9 @@ import com.exam.examserver.storage.GcsSignedUrl;
 import org.springframework.data.domain.*;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.http.*;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -35,19 +40,21 @@ public class FileArchiveController {
     private final SubjectRepository subjectRepo;
     private final GcsSignedUrl signer;
     private final GcsObjectHelper gcs;
+    private final ScopeResolver scopeResolver;
 
     public FileArchiveController(FileArchiveService service,
                                  FileArchiveRepository fileRepo,
                                  UserRepository userRepo,
                                  SubjectRepository subjectRepo,
                                  GcsSignedUrl signer,
-                                 GcsObjectHelper gcs) {
+                                 GcsObjectHelper gcs, ScopeResolver scopeResolver) {
         this.service = service;
         this.fileRepo = fileRepo;
         this.userRepo = userRepo;
         this.subjectRepo = subjectRepo;
         this.signer = signer;
         this.gcs = gcs;
+        this.scopeResolver = scopeResolver;
     }
 
     // ================= LIST + FILTER =================
@@ -105,6 +112,7 @@ public class FileArchiveController {
         final List<Long> usrIds  = (uq != null) ? userRepo.searchIdsByKeyword(uq)  : null;
         if (usrIds != null && usrIds.isEmpty())  return PageDTO.from(Page.empty(p));
 
+        Specification<FileArchive> spec = scopeSpec();
         // ---- dynamic specs
         List<Specification<FileArchive>> specs = new ArrayList<>();
         if (subjectId != null) specs.add((root, cq, cb) -> cb.equal(root.get("subjectId"), subjectId));
@@ -120,7 +128,7 @@ public class FileArchiveController {
         if (fromTs != null)    specs.add((root, cq, cb) -> cb.greaterThanOrEqualTo(root.get("createdAt"), fromTs));
         if (toTs != null)      specs.add((root, cq, cb) -> cb.lessThan(root.get("createdAt"), toTs));
 
-        Specification<FileArchive> spec = specs.stream().reduce(Specification::and).orElse(null);
+        for (var s : specs) spec = spec.and(s);
         Page<FileArchive> rs = fileRepo.findAll(spec, p);
 
         // ---- batch resolve names
@@ -198,14 +206,19 @@ public class FileArchiveController {
     }
 
     // ===== CRUD nhỏ lẻ & URL helpers giữ nguyên =====
+    public record UrlDTO(String url) {}
+
     @GetMapping("/{id}")
     public FileArchive detail(@PathVariable Long id) {
-        return fileRepo.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        var fa = fileRepo.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        ensureReadable(fa); // NEW
+        return fa;
     }
 
     @RequestMapping(value = "/{id}", method = RequestMethod.HEAD)
     public ResponseEntity<Void> head(@PathVariable Long id) {
         var fa = fileRepo.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        ensureReadable(fa); // NEW
         var blob = gcs.stat(fa.getStorageKey());
         return (blob != null) ? ResponseEntity.ok().build() : ResponseEntity.notFound().build();
     }
@@ -214,6 +227,7 @@ public class FileArchiveController {
     public ResponseEntity<Void> view(@PathVariable Long id,
                                      @RequestParam(defaultValue = "5") long minutes) {
         var fa = fileRepo.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        ensureReadable(fa); // NEW
         minutes = Math.max(1, Math.min(minutes, 30));
         String url = signer.signInline(fa.getStorageKey(), Duration.ofMinutes(minutes),
                 fa.getFilename(), fa.getMimeType());
@@ -224,6 +238,7 @@ public class FileArchiveController {
     public ResponseEntity<Void> download(@PathVariable Long id,
                                          @RequestParam(defaultValue = "5") long minutes) {
         var fa = fileRepo.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        ensureReadable(fa); // NEW
         minutes = Math.max(1, Math.min(minutes, 30));
         String url = signer.signAttachment(
                 fa.getStorageKey(), Duration.ofMinutes(minutes), fa.getFilename(), fa.getMimeType()
@@ -231,19 +246,11 @@ public class FileArchiveController {
         return ResponseEntity.status(302).location(URI.create(url)).build();
     }
 
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Long id) throws Exception {
-        if (!fileRepo.existsById(id)) throw new ResponseStatusException(HttpStatus.NOT_FOUND);
-        service.delete(id);
-        return ResponseEntity.noContent().build();
-    }
-
-    public record UrlDTO(String url) {}
-
     @GetMapping("/{id}/view-url")
     public UrlDTO viewUrl(@PathVariable Long id,
                           @RequestParam(defaultValue = "5") long minutes) {
         var fa = fileRepo.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        ensureReadable(fa); // NEW
         minutes = Math.max(1, Math.min(minutes, 30));
         String url = signer.signInline(fa.getStorageKey(), Duration.ofMinutes(minutes),
                 fa.getFilename(), fa.getMimeType());
@@ -254,6 +261,7 @@ public class FileArchiveController {
     public UrlDTO downloadUrl(@PathVariable Long id,
                               @RequestParam(defaultValue = "5") long minutes) {
         var fa = fileRepo.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        ensureReadable(fa); // NEW
         minutes = Math.max(1, Math.min(minutes, 30));
         String url = signer.signAttachment(
                 fa.getStorageKey(), Duration.ofMinutes(minutes), fa.getFilename(), fa.getMimeType()
@@ -261,11 +269,13 @@ public class FileArchiveController {
         return new UrlDTO(url);
     }
 
-    // ================= Moderation =================
     @PostMapping("/{id}/approve")
     public ResponseEntity<Void> approve(@PathVariable Long id,
                                         @RequestParam(required = false) Long reviewerId) {
-        service.approve(id, reviewerId);
+        var fa = fileRepo.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        ensureModeratable(fa); // NEW
+        Long rid = (reviewerId != null) ? reviewerId : currentUserIdOrNull();
+        service.approve(id, rid);
         return ResponseEntity.noContent().build();
     }
 
@@ -273,14 +283,24 @@ public class FileArchiveController {
     public ResponseEntity<Void> reject(@PathVariable Long id,
                                        @RequestBody Map<String, String> body,
                                        @RequestParam(required = false) Long reviewerId) {
-        final String reason   = Optional.ofNullable(body.get("reason")).orElse("").trim();
-        final String rawDl    = body.get("deadline"); // có thể là ISO (2025-09-04T08:00:00Z) hoặc yyyy-MM-dd
-
-        // Parse linh hoạt: ISO -> Instant; yyyy-MM-dd -> end-of-day theo TZ server -> Instant
+        var fa = fileRepo.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        ensureModeratable(fa); // NEW
+        final String reason = Optional.ofNullable(body.get("reason")).orElse("").trim();
+        final String rawDl  = body.get("deadline");
         final Instant deadlineTs = parseDeadlineFlexible(rawDl);
-        service.reject(id, reviewerId, reason, deadlineTs);
+        Long rid = (reviewerId != null) ? reviewerId : currentUserIdOrNull();
+        service.reject(id, rid, reason, deadlineTs);
         return ResponseEntity.noContent().build();
     }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(@PathVariable Long id) throws Exception {
+        var fa = fileRepo.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        ensureDeletable(fa); // NEW
+        service.delete(id);
+        return ResponseEntity.noContent().build();
+    }
+
 
     /** Nhận null | yyyy-MM-dd | ISO-8601. Trả về Instant (UTC). */
     private static Instant parseDeadlineFlexible(String s) {
@@ -298,5 +318,106 @@ public class FileArchiveController {
             // Bạn có thể throw 400 nếu muốn chặt chẽ hơn
             return null;
         }
+    }
+
+    private Long currentUserIdOrNull() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) return null;
+
+        Object principal = auth.getPrincipal();
+        String username = null;
+
+        if (principal instanceof UserDetails ud) {
+            username = ud.getUsername();
+        } else if (principal instanceof String s) {
+            // nhiều provider đặt principal = username dạng String
+            username = s;
+        }
+
+        if (username == null || username.isBlank()) return null;
+
+        return userRepo.findByUsername(username)
+                .map(User::getId)
+                .orElse(null);
+    }
+
+    private String currentUsername() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) return null;
+        Object p = auth.getPrincipal();
+        if (p instanceof UserDetails ud) return ud.getUsername();
+        if (p instanceof String s) return s;
+        return null;
+    }
+
+    private Specification<FileArchive> scopeSpec() {
+        var scope = scopeResolver.resolveByUsername(currentUsername());
+        if (scope.all) return (root, cq, cb) -> cb.conjunction();
+        if (scope.onlyUserId != null) {
+            return (root, cq, cb) -> cb.equal(root.get("userId"), scope.onlyUserId);
+        }
+        var sids = scope.subjectIds;
+        if (sids == null || sids.isEmpty()) {
+            return (root, cq, cb) -> cb.disjunction(); // không match gì
+        }
+        return (root, cq, cb) -> root.get("subjectId").in(sids);
+    }
+
+    private void ensureReadable(FileArchive fa) {
+        var scope = scopeResolver.resolveByUsername(currentUsername());
+        if (scope.all) return;
+        if (scope.onlyUserId != null) {
+            if (!Objects.equals(fa.getUserId(), scope.onlyUserId))
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+            return;
+        }
+        var sids = scope.subjectIds;
+        if (sids == null || !sids.contains(fa.getSubjectId()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+    }
+
+    private void ensureModeratable(FileArchive fa) {
+        // ADMIN full; HEAD trong phạm vi dept; TEACHER không được
+        var username = currentUsername();
+        var userOpt = userRepo.findByUsername(username);
+        if (userOpt.isEmpty()) throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        var user = userOpt.get();
+
+        boolean isAdmin = user.getUserRoles().stream().anyMatch(ur -> ur.getRole().getRoleName() == RoleType.ADMIN);
+        if (isAdmin) return;
+
+        boolean isHead = user.getUserRoles().stream().anyMatch(ur -> ur.getRole().getRoleName() == RoleType.HEAD);
+        if (!isHead) throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+
+        var scope = scopeResolver.resolveByUsername(username);
+        var sids = scope.subjectIds;
+        if (sids == null || !sids.contains(fa.getSubjectId()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+    }
+
+    private void ensureDeletable(FileArchive fa) {
+        var username = currentUsername();
+        var userOpt = userRepo.findByUsername(username);
+        if (userOpt.isEmpty()) throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        var user = userOpt.get();
+
+        boolean isAdmin = user.getUserRoles().stream().anyMatch(ur -> ur.getRole().getRoleName() == RoleType.ADMIN);
+        if (isAdmin) return;
+
+        boolean isHead = user.getUserRoles().stream().anyMatch(ur -> ur.getRole().getRoleName() == RoleType.HEAD);
+        if (isHead) {
+            var scope = scopeResolver.resolveByUsername(username);
+            var sids = scope.subjectIds;
+            if (sids == null || !sids.contains(fa.getSubjectId()))
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+            return;
+        }
+
+        // TEACHER: chỉ xoá của mình; EXPORT đã APPROVED thì không cho xoá
+        if (!Objects.equals(fa.getUserId(), user.getId()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        if ("EXPORT".equalsIgnoreCase(fa.getKind())
+                && fa.getReviewStatus() == ReviewStatus.APPROVED)
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
     }
 }

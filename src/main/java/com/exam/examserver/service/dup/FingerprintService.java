@@ -89,4 +89,9 @@ public class FingerprintService {
         // unique
         return new ArrayList<>(new LinkedHashSet<>(out));
     }
+
+    @Transactional
+    public void remove(Long questionId) {
+        try { repo.deleteById(questionId); } catch (Exception ignore) {}
+    }
 }

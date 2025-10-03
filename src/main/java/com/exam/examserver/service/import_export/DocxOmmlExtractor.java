@@ -29,6 +29,7 @@ import java.io.InputStream;
 import java.math.BigInteger;
 import java.util.*;
 import java.util.List;
+import java.util.regex.Pattern;
 
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -59,33 +60,138 @@ public class DocxOmmlExtractor {
 
             if (unwrapped instanceof P) {
                 appendParagraph((P) unwrapped, sb, images, pkg, numState);
+
             } else if (unwrapped instanceof Tbl) {
                 Tbl tbl = (Tbl) unwrapped;
-                // Trong DocxOmmlExtractor.append (khi gặp Tbl):
+
+                // 1) Parse bảng KHÔNG copy vMerge; lưu cờ vMerge để có thể copy sau nếu cần
+                List<List<String>> rows = new ArrayList<>();
+                List<List<Boolean>> vFlagsRows = new ArrayList<>(); // true nếu ô là vMerge="continue"
+
                 for (Object ro : tbl.getContent()) {
                     Tr row = (Tr) XmlUtils.unwrap(ro);
-                    boolean firstCell = true;
+                    List<String> cells = new ArrayList<>();
+                    List<Boolean> vFlags = new ArrayList<>();
+
                     for (Object co : row.getContent()) {
                         Tc cell = (Tc) XmlUtils.unwrap(co);
-                        if (!firstCell) sb.append(" | ");     // phân tách cột
-                        firstCell = false;
 
+                        // lấy text trong ô
+                        StringBuilder cellBuf = new StringBuilder();
                         boolean firstPara = true;
                         for (Object po : cell.getContent()) {
                             Object p = XmlUtils.unwrap(po);
                             if (p instanceof P) {
-                                if (!firstPara) sb.append('\n'); // giữ xuống dòng trong 1 ô
-                                appendParagraph((P) p, sb, images, pkg, numState);
+                                if (!firstPara) cellBuf.append('\n');
+                                appendParagraph((P) p, cellBuf, images, pkg, new NumberingState());
                                 firstPara = false;
                             }
                         }
+                        String cellText = cellBuf.toString()
+                                .replace('\u00A0', ' ')
+                                .replace("\r", "")
+                                .replaceAll("\\n+", " ")
+                                .trim();
+
+                        // gridSpan
+                        int span = 1;
+                        if (cell.getTcPr() != null && cell.getTcPr().getGridSpan() != null
+                                && cell.getTcPr().getGridSpan().getVal() != null) {
+                            span = Math.max(1, cell.getTcPr().getGridSpan().getVal().intValue());
+                        }
+
+                        // vMerge="continue"?
+                        boolean mergedDown = false;
+                        if (cell.getTcPr() != null && cell.getTcPr().getVMerge() != null) {
+                            var v = cell.getTcPr().getVMerge().getVal();
+                            mergedDown = (v == null || "continue".equalsIgnoreCase(v.toString()));
+                        }
+
+                        String normalized = (cellText.isEmpty() || mergedDown) ? "" : cellText;
+
+                        for (int k = 0; k < span; k++) {
+                            cells.add(normalized);
+                            vFlags.add(mergedDown); // nhân theo gridSpan
+                        }
                     }
-                    sb.append('\n'); // kết thúc 1 hàng
+
+                    rows.add(cells);
+                    vFlagsRows.add(vFlags);
+                }
+
+                // 2) Pad cột cho đều & chuẩn bị kiểm tra numeric
+                Pattern P_NUM_INF = Pattern.compile("^\\s*(?:[-+]?\\d+(?:[.,]\\d+)?|∞|¥|)?\\s*$");
+                int R = rows.size();
+                int Cmax = 0;
+                for (var r : rows) Cmax = Math.max(Cmax, r.size());
+                for (int i = 0; i < R; i++) {
+                    var r = rows.get(i);
+                    var f = vFlagsRows.get(i);
+                    while (r.size() < Cmax) { r.add(""); f.add(false); }
+                }
+
+                // 3) Phân loại: bảng số (matrix) hay bảng văn bản?
+                boolean rectangular = (R > 0 && Cmax > 0);
+                boolean numericOnly = rectangular;
+                if (rectangular) {
+                    outer:
+                    for (var r : rows) {
+                        for (String t : r) {
+                            String x = (t == null ? "" : t).replace(',', '.').trim();
+                            if (!P_NUM_INF.matcher(x).matches()) { numericOnly = false; break outer; }
+                        }
+                    }
+                } else {
+                    numericOnly = false;
+                }
+
+                if (numericOnly) {
+                    // 4A) MATRIX: KHÔNG copy vMerge; ô rỗng -> \infty; render pmatrix (mọi m×n)
+                    sb.append("$$\n\\begin{bmatrix}\n");
+                    for (int i = 0; i < R; i++) {
+                        for (int j = 0; j < Cmax; j++) {
+                            String v = rows.get(i).get(j);
+                            if (v == null || v.isBlank()) v = "\\infty";
+                            v = v.replace(',', '.')
+                                    .replace("¥", "\\infty")
+                                    .replace("∞", "\\infty")
+                                    .trim();
+                            sb.append(v);
+                            if (j + 1 < Cmax) sb.append(" & ");
+                        }
+                        sb.append("\\\\\n");
+                    }
+                    sb.append("\\end{bmatrix}\n$$\n");
+
+                } else {
+                    // 4B) BẢNG VĂN BẢN: COPY vMerge="continue" từ hàng trên để giữ bố cục
+                    for (int i = 1; i < R; i++) {
+                        var prev = rows.get(i - 1);
+                        var cur  = rows.get(i);
+                        var flags = vFlagsRows.get(i);
+                        for (int j = 0; j < Cmax; j++) {
+                            if (Boolean.TRUE.equals(flags.get(j))) {
+                                cur.set(j, prev.get(j));
+                            }
+                        }
+                    }
+                    // Fallback in dạng pipe
+                    for (var r : rows) {
+                        boolean first = true;
+                        for (String t : r) {
+                            if (!first) sb.append(" | ");
+                            first = false;
+                            sb.append(t == null ? "" : t);
+                        }
+                        sb.append('\n');
+                    }
                 }
             }
         }
+
         return new ExtractResult(sb.toString(), images);
     }
+
 
     public static ExtractResult extractPdf(InputStream is) throws IOException {
         // Uỷ quyền sang module PDF mới (giữ API cũ để tương thích ImportQuestionService)

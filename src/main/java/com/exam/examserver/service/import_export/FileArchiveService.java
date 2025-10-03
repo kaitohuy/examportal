@@ -4,10 +4,14 @@ import com.exam.examserver.enums.ArchiveVariant;
 import com.exam.examserver.enums.ReviewStatus;
 import com.exam.examserver.model.exam.FileArchive;
 import com.exam.examserver.repo.FileArchiveRepository;
+import com.exam.examserver.repo.SubjectRepository;
+import com.exam.examserver.repo.UserRepository;
+import com.exam.examserver.service.impl.NotificationService;
 import com.exam.examserver.storage.FileArchiveStorage;
 import com.exam.examserver.storage.GcsObjectHelper;
 import com.exam.examserver.storage.GcsSignedUrl;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.transaction.Transactional;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -15,6 +19,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.*;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -25,15 +30,21 @@ public class FileArchiveService {
     private final GcsSignedUrl signer;
     private final GcsObjectHelper gcs;
     private final ObjectMapper om = new ObjectMapper();
+    private final NotificationService notif;
+    private final SubjectRepository subjectRepo;
+    private final UserRepository userRepo;
 
     public FileArchiveService(FileArchiveStorage storage,
                               FileArchiveRepository fileRepo,
                               GcsSignedUrl signer,
-                              GcsObjectHelper gcs) {
+                              GcsObjectHelper gcs, NotificationService notif, SubjectRepository subjectRepo, UserRepository userRepo) {
         this.storage = storage;
         this.fileRepo = fileRepo;
         this.signer = signer;
         this.gcs = gcs;
+        this.notif = notif;
+        this.subjectRepo = subjectRepo;
+        this.userRepo = userRepo;
     }
 
     /** Lưu trực tiếp vào archives/... (APPROVED). */
@@ -69,18 +80,23 @@ public class FileArchiveService {
         return fileRepo.save(fa);
     }
 
-    /** Lưu PENDING vào tmp/archives/... (khi user cần duyệt). */
-    public FileArchive savePendingExport(Long subjectId, Long userId,
-                                         String filename, String mimeType,
-                                         byte[] data, Map<String, Object> meta) throws Exception {
-        String key = "tmp/archives/" + UUID.randomUUID() + "_" + filename;
+    /**
+     * Lưu PENDING vào tmp/archives/... (khi user cần duyệt).
+     */
+    @Transactional
+    public void savePendingExport(Long subjectId, Long userId,
+                                  String filename, String mimeType,
+                                  byte[] data, Map<String, Object> meta) throws Exception {
+        String safeName = sanitizeFilename(filename);
+        String key = "tmp/" + UUID.randomUUID() + "_" + safeName;
+
         gcs.putBytes(key, mimeType == null ? "application/octet-stream" : mimeType, data);
 
         FileArchive fa = new FileArchive();
         fa.setKind("EXPORT");
         fa.setSubjectId(subjectId);
         fa.setUserId(userId);
-        fa.setFilename(filename);
+        fa.setFilename(safeName);
         fa.setMimeType(mimeType == null ? "application/octet-stream" : mimeType);
         fa.setSizeBytes(data.length);
         fa.setSha256(DigestUtils.sha256Hex(data));
@@ -102,13 +118,31 @@ public class FileArchiveService {
 
         fa.setReviewStatus(ReviewStatus.PENDING);
         fa.setSubmittedAt(Instant.now());
-        return fileRepo.save(fa);
+        fileRepo.save(fa);
+
+        // NEW: tạo notification
+        notifyHeadOnPending(subjectId, userId, safeName);
+        // (tuỳ chọn) báo cho chính GV rằng đã gửi thành công
+        notif.create(userId, "Đã gửi file chờ duyệt",
+                "Bạn đã gửi \"" + safeName + "\" để chờ duyệt.", Instant.now().plus(Duration.ofDays(7)));
     }
 
-    /** Lưu record trỏ đến key đã có sẵn. */
-    public FileArchive saveExistingByKey(String kind, Long subjectId, Long userId,
-                                         String filename, String mimeType,
-                                         String storageKey, Map<String, Object> meta) throws Exception {
+    // helper mới — loại bỏ mọi path trong tên file để không lồng thư mục
+    private static String sanitizeFilename(String filename) {
+        if (filename == null || filename.isBlank()) return "file.bin";
+        String s = filename.replace('\\','/');
+        int p = s.lastIndexOf('/');
+        String base = (p >= 0) ? s.substring(p + 1) : s;
+        return base.replaceAll("[\\r\\n]", "");
+    }
+
+
+    /**
+     * Lưu record trỏ đến key đã có sẵn.
+     */
+    public void saveExistingByKey(String kind, Long subjectId, Long userId,
+                                  String filename, String mimeType,
+                                  String storageKey, Map<String, Object> meta) throws Exception {
         var blob = gcs.stat(storageKey);
         long size = (blob != null ? blob.getSize() : 0L);
         String ct = (mimeType != null ? mimeType : (blob != null ? blob.getContentType() : "application/octet-stream"));
@@ -129,7 +163,7 @@ public class FileArchiveService {
         if ("EXPORT".equalsIgnoreCase(kind) && fa.getReviewStatus() == null) {
             fa.setReviewStatus(storageKey.startsWith("tmp/") ? ReviewStatus.PENDING : ReviewStatus.APPROVED);
         }
-        return fileRepo.save(fa);
+        fileRepo.save(fa);
     }
 
     public String signUrl(Long id, Duration ttl) {
@@ -137,13 +171,23 @@ public class FileArchiveService {
         return signer.sign(fa.getStorageKey(), ttl);
     }
 
+    @Transactional
     public void delete(Long id) throws Exception {
         FileArchive fa = fileRepo.findById(id).orElseThrow();
         storage.delete(fa.getStorageKey());
         fileRepo.deleteById(id);
+
+        if (fa.getReviewStatus() == ReviewStatus.APPROVED && fa.getUserId() != null) {
+            notif.create(
+                    fa.getUserId(),
+                    "File đã bị xoá",
+                    "File \"" + fa.getFilename() + "\" (đã được duyệt) đã bị xoá khỏi hệ thống.",
+                    Instant.now().plus(Duration.ofDays(30))
+            );
+        }
     }
 
-    // ================= Moderation =================
+    @Transactional
     public void approve(Long id, Long reviewerId) {
         FileArchive fa = fileRepo.findById(id).orElseThrow();
         if (fa.getReviewStatus() != ReviewStatus.PENDING) return;
@@ -158,18 +202,72 @@ public class FileArchiveService {
         fa.setReviewStatus(ReviewStatus.APPROVED);
         fa.setReviewedAt(Instant.now());
         if (reviewerId != null) fa.setReviewedById(reviewerId);
+
         fileRepo.save(fa);
+
+        notifyTeacherOnApproved(fa, reviewerId);
     }
 
+    @Transactional
     public void reject(Long id, Long reviewerId, String reason, Instant deadlineUtc) {
-        FileArchive f = fileRepo.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        FileArchive f = fileRepo.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
 
         f.setReviewStatus(ReviewStatus.REJECTED);
         f.setReviewNote((reason == null || reason.isBlank()) ? null : reason.trim());
         f.setReviewedAt(Instant.now());
-        f.setReviewedById(reviewerId);
+        if (reviewerId != null) f.setReviewedById(reviewerId);
+        f.setReviewDeadline(deadlineUtc);
 
-        f.setReviewDeadline(deadlineUtc); // Entity nên để kiểu Instant
         fileRepo.save(f);
+
+        notifyTeacherOnRejected(f, reviewerId);
+    }
+
+    private String displayName(Long userId) {
+        return userRepo.findById(userId)
+                .map(u -> {
+                    String f = Optional.ofNullable(u.getFirstName()).orElse("").trim();
+                    String l = Optional.ofNullable(u.getLastName()).orElse("").trim();
+                    String full1 = (f + " " + l).trim();
+                    String full2 = (l + " " + f).trim();
+                    if (!full1.isBlank()) return full1;
+                    if (!full2.isBlank()) return full2;
+                    if (u.getUsername()!=null && !u.getUsername().isBlank()) return u.getUsername();
+                    if (u.getEmail()!=null && !u.getEmail().isBlank()) return u.getEmail();
+                    return "User #" + u.getId();
+                })
+                .orElse("User #" + userId);
+    }
+
+    private void notifyHeadOnPending(Long subjectId, Long uploaderId, String filename) {
+        Long headId = subjectRepo.findHeadUserIdBySubjectId(subjectId);
+        if (headId == null) return; // khoa chưa có head, bỏ qua
+
+        String upName = displayName(uploaderId);
+        String title = "Có file chờ duyệt";
+        String msg = "Giáo viên " + upName + " gửi file \"" + filename + "\" chờ duyệt.";
+        notif.create(headId, title, msg, null); // không đặt expiresAt -> lưu vô thời hạn
+    }
+
+    private void notifyTeacherOnApproved(FileArchive fa, Long reviewerId) {
+        if (fa.getUserId() == null) return;
+        String rvName = (reviewerId != null) ? displayName(reviewerId) : "HEAD";
+        String title = "File đã được duyệt";
+        String msg = "File \"" + fa.getFilename() + "\" đã được duyệt bởi " + rvName + ".";
+        notif.create(fa.getUserId(), title, msg, Instant.now().plus(Duration.ofDays(30)));
+    }
+
+    private void notifyTeacherOnRejected(FileArchive fa, Long reviewerId) {
+        if (fa.getUserId() == null) return;
+        String rvName = (reviewerId != null) ? displayName(reviewerId) : "HEAD";
+        String reason = Optional.ofNullable(fa.getReviewNote()).orElse("(không có)");
+        String dl = (fa.getReviewDeadline() != null)
+                ? " Hạn xử lý: " + fa.getReviewDeadline().toString()
+                : "";
+        String title = "File bị từ chối";
+        String msg = "File \"" + fa.getFilename() + "\" bị từ chối bởi " + rvName +
+                ". Lý do: " + reason + "." + dl;
+        notif.create(fa.getUserId(), title, msg, Instant.now().plus(Duration.ofDays(14)));
     }
 }

@@ -4,15 +4,13 @@ import com.exam.examserver.dto.exam.CreateQuestionDTO;
 import com.exam.examserver.dto.exam.QuestionDTO;
 import com.exam.examserver.dto.exam.QuestionFilter;
 import com.exam.examserver.enums.Difficulty;
+import com.exam.examserver.enums.IssueStatus;
 import com.exam.examserver.enums.QuestionLabel;
 import com.exam.examserver.enums.QuestionType;
 import com.exam.examserver.mapper.QuestionMapper;
 import com.exam.examserver.model.exam.*;
 import com.exam.examserver.model.user.User;
-import com.exam.examserver.repo.QuestionImageRepository;
-import com.exam.examserver.repo.QuestionRepository;
-import com.exam.examserver.repo.SubjectRepository;
-import com.exam.examserver.repo.UserRepository;
+import com.exam.examserver.repo.*;
 import com.exam.examserver.repo.spec.QuestionSpecs;
 import com.exam.examserver.service.dup.FingerprintService;
 import com.exam.examserver.storage.ImageStorageService;
@@ -44,6 +42,10 @@ public class QuestionServiceImpl implements QuestionService {
     private final ImageStorageService imageStorageService;
     private final FingerprintService fingerprintService;
     private final QuestionImageRepository imageRepo;
+    private final BundleItemRepository bundleItemRepo;
+    private final QuestionBundleRepository bundleRepo;
+    private final QuestionIssueRepository issueRepo;
+
     @PersistenceContext
     private EntityManager em;
 
@@ -51,7 +53,7 @@ public class QuestionServiceImpl implements QuestionService {
                                SubjectRepository subjectRepo,
                                UserRepository userRepo,
                                QuestionMapper mapper,
-                               ImageStorageService imageStorageService, FingerprintService fingerprintService, QuestionImageRepository imageRepo) {
+                               ImageStorageService imageStorageService, FingerprintService fingerprintService, QuestionImageRepository imageRepo, BundleItemRepository bundleItemRepo, QuestionBundleRepository bundleRepo, QuestionIssueRepository issueRepo) {
         this.questionRepo = questionRepo;
         this.subjectRepo = subjectRepo;
         this.userRepo = userRepo;
@@ -59,6 +61,9 @@ public class QuestionServiceImpl implements QuestionService {
         this.imageStorageService = imageStorageService;
         this.fingerprintService = fingerprintService;
         this.imageRepo = imageRepo;
+        this.bundleItemRepo = bundleItemRepo;
+        this.bundleRepo = bundleRepo;
+        this.issueRepo = issueRepo;
     }
 
     @Override
@@ -252,12 +257,33 @@ public class QuestionServiceImpl implements QuestionService {
         }
     }
 
+//    @Override
+//    public void delete(Long questionId) {
+//        Question q = questionRepo.findById(questionId)
+//                .orElseThrow(() -> new EntityNotFoundException("Question not found"));
+//
+//        // Xoá ảnh cover + gallery (không fail toàn bộ nếu 1 ảnh lỗi)
+//        Set<String> urls = new LinkedHashSet<>();
+//        if (q.getImageUrl() != null && !q.getImageUrl().isEmpty()) urls.add(q.getImageUrl());
+//        if (q.getImages() != null) {
+//            for (QuestionImage img : q.getImages()) {
+//                if (img.getUrl() != null && !img.getUrl().isEmpty()) urls.add(img.getUrl());
+//            }
+//        }
+//        for (String url : urls) {
+//            try { imageStorageService.deleteImage(url); } catch (Exception ignored) {}
+//        }
+//
+//        questionRepo.delete(q);
+//    }
+
     @Override
     public void delete(Long questionId) {
         Question q = questionRepo.findById(questionId)
                 .orElseThrow(() -> new EntityNotFoundException("Question not found"));
 
-        // Xoá ảnh cover + gallery (không fail toàn bộ nếu 1 ảnh lỗi)
+        List<Long> affectedBundleIds = bundleItemRepo.findBundleIdsByQuestionId(questionId);
+
         Set<String> urls = new LinkedHashSet<>();
         if (q.getImageUrl() != null && !q.getImageUrl().isEmpty()) urls.add(q.getImageUrl());
         if (q.getImages() != null) {
@@ -270,6 +296,14 @@ public class QuestionServiceImpl implements QuestionService {
         }
 
         questionRepo.delete(q);
+
+        if (affectedBundleIds != null && !affectedBundleIds.isEmpty()) {
+            for (Long bid : affectedBundleIds) {
+                if (bundleItemRepo.countByBundleId(bid) == 0) {
+                    bundleRepo.deleteById(bid);
+                }
+            }
+        }
     }
 
     @Override
@@ -408,11 +442,23 @@ public class QuestionServiceImpl implements QuestionService {
                 QuestionSpecs.type(f.getType()),
                 QuestionSpecs.createdByContains(f.getCreatedBy()),
                 QuestionSpecs.createdBetween(f.getFrom(), f.getTo()),
-                QuestionSpecs.fullText(f.getQ())
+                QuestionSpecs.fullText(f.getQ()),
+                QuestionSpecs.flagged(f.getFlagged())
         );
 
         Page<Question> page = questionRepo.findAll(spec, pageable);
-        return page.map(mapper::toDto);
+        Page<QuestionDTO> pageDto = page.map(mapper::toDto);
+
+// gắn cờ flagged theo batch
+        List<Long> ids = pageDto.getContent().stream().map(QuestionDTO::getId).toList();
+        if (!ids.isEmpty()) {
+            var openIssues = issueRepo.findByQuestionIdInAndStatus(ids, IssueStatus.OPEN);
+            var flaggedSet = openIssues.stream().map(ii -> ii.getQuestion().getId()).collect(Collectors.toSet());
+            pageDto.getContent().forEach(dto -> dto.setFlagged(flaggedSet.contains(dto.getId())));
+        }
+
+        return pageDto;
+
     }
 
     @Override
@@ -426,7 +472,8 @@ public class QuestionServiceImpl implements QuestionService {
                 QuestionSpecs.type(f.getType()),
                 QuestionSpecs.createdByContains(f.getCreatedBy()),
                 QuestionSpecs.createdBetween(f.getFrom(), f.getTo()),
-                QuestionSpecs.fullText(f.getQ())
+                QuestionSpecs.fullText(f.getQ()),
+                QuestionSpecs.flagged(f.getFlagged())
         );
 
         // KHÔNG truyền sort/pageable để tránh ORDER BY trên DISTINCT (Postgres 42P10)
@@ -436,11 +483,23 @@ public class QuestionServiceImpl implements QuestionService {
                 .toList();
     }
 
+//    @Override
+//    @Transactional
+//    public int deleteAllByIds(List<Long> ids) {
+//        if (ids == null || ids.isEmpty()) return 0;
+//        questionRepo.deleteAllByIdInBatch(ids);
+//        return ids.size();
+//    }
+
     @Override
     @Transactional
     public int deleteAllByIds(List<Long> ids) {
         if (ids == null || ids.isEmpty()) return 0;
-        questionRepo.deleteAllByIdInBatch(ids);
-        return ids.size();
+        int ok = 0;
+        for (Long id : ids) {
+            delete(id); // dùng hàm delete đã viết ở trên
+            ok++;
+        }
+        return ok;
     }
 }

@@ -405,7 +405,7 @@ public class StatsService {
         dto.archive.approved = countMyArchiveByStatus(userId, ReviewStatus.APPROVED, fromInst, toInst);
         dto.archive.rejected = countMyArchiveByStatus(userId, ReviewStatus.REJECTED, fromInst, toInst);
         dto.archive.avgReviewHours = Math.round(averageMyReviewHours(userId, fromInst, toInst) * 10.0) / 10.0;
-        dto.archive.pendingSoon = findMyPendingSoon(userId, 5);
+        dto.archive.pendingSoon = findMyPendingSoon(userId);
 
         return dto;
     }
@@ -570,17 +570,21 @@ public class StatsService {
         return (n == 0) ? 0d : sumHours / n;
     }
 
-    private List<TeacherOverviewDto.PendingItem> findMyPendingSoon(Long userId, int limit) {
+    private List<TeacherOverviewDto.PendingItem> findMyPendingSoon(Long userId) {
+        Instant now = Instant.now();
+
         String jpql =
                 "select f.id, f.filename, cast(f.variant as string), cast(f.reviewStatus as string), " +
-                        "f.createdAt, f.reviewDeadline, s.name " +
+                        "       f.createdAt, f.reviewDeadline, s.name " +
                         "from FileArchive f left join Subject s on s.id = f.subjectId " +
-                        "where f.userId = :uid and f.reviewStatus = com.exam.examserver.enums.ReviewStatus.PENDING " +
-                        "order by (case when f.reviewDeadline is null then 1 else 0 end), f.reviewDeadline asc, f.createdAt asc";
+                        "where f.userId = :uid " +
+                        "  and f.reviewDeadline is not null " +
+                        "  and f.reviewDeadline >= :cutoff " +
+                        "order by f.reviewDeadline asc, f.createdAt asc";
 
         var q = em.createQuery(jpql, Object[].class)
                 .setParameter("uid", userId)
-                .setMaxResults(limit);
+                .setParameter("cutoff", now);
 
         List<TeacherOverviewDto.PendingItem> res = new ArrayList<>();
         for (Object[] r : q.getResultList()) {

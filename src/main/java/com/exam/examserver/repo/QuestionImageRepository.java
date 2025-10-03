@@ -23,4 +23,13 @@ public interface QuestionImageRepository extends JpaRepository<QuestionImage, Lo
     @Query("delete from QuestionImage i where i.question.id in :ids")
     int deleteByQuestionIdIn(@Param("ids") Collection<Long> ids);
 
+    // QuestionImageRepository.java
+    @Query("select qi.url from QuestionImage qi " +
+            "where qi.question.id in :ids and qi.url is not null and qi.url <> ''")
+    List<String> findAllUrlsByQuestionIds(@Param("ids") Collection<Long> ids);
+
+    @Query("select count(qi) from QuestionImage qi " +
+            "where qi.url = :url and qi.question.id not in :excludedIds")
+    long countOtherGalleryRefs(@Param("url") String url,
+                               @Param("excludedIds") Collection<Long> excludedIds);
 }

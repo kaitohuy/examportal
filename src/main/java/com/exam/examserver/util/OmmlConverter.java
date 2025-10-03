@@ -304,8 +304,8 @@ public final class OmmlConverter {
         s = protectGroups(s, P_SUP_GROUP, stash);
         s = protectGroups(s, P_SUB_GROUP, stash);
 
-        // 2) Chỉ escape ngoặc tập hợp số
-        s = s.replaceAll("(?<![_^\\\\\\p{L}])\\{\\s*([0-9,\\s]+)\\s*\\}(?!\\p{L})", "\\\\{$1\\\\}");
+        // 2) Chỉ escape ngoặc tập hợp số NẾU CHƯA có backslash phía trước
+        s = s.replaceAll("(?<!\\\\)\\{\\s*([0-9,;\\s]+)\\s*\\}(?![_^\\p{L}])", "\\\\{$1\\\\}");
 
         // 3) Khôi phục
         for (int i = 0; i < stash.size(); i++) {

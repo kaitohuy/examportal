@@ -95,6 +95,17 @@ public class Question {
     @OneToMany(mappedBy = "parent", cascade = CascadeType.REMOVE, orphanRemoval = true)
     private List<Question> clones = new ArrayList<>();
 
+    @OneToOne(mappedBy = "question",
+            cascade = CascadeType.REMOVE,
+            orphanRemoval = true,
+            fetch = FetchType.LAZY)
+    private QuestionMeta meta;
+
+    @OneToMany(mappedBy = "question",
+            cascade = CascadeType.REMOVE,
+            orphanRemoval = true)
+    private List<BundleItem> bundleItems = new ArrayList<>();
+
     public List<Question> getClones() {
         return clones;
     }

@@ -59,5 +59,12 @@ public interface SubjectRepository extends JpaRepository<Subject, Long> {
        WHERE ts.teacher.id = :teacherId
        """)
     List<Subject> findByTeacherIdWithTeachers(@Param("teacherId") Long teacherId);
+
+    @Query("""
+  select d.headUser.id
+  from Subject s join s.department d
+  where s.id = :subjectId
+""")
+    Long findHeadUserIdBySubjectId(@Param("subjectId") Long subjectId);
 }
 

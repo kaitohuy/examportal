@@ -19,7 +19,6 @@ import com.exam.examserver.service.import_export.FileArchiveService;
 import com.exam.examserver.service.import_export.ImportQuestionService;
 import com.exam.examserver.service.import_export.ExportQuestionService;
 import com.exam.examserver.service.QuestionService;
-import com.exam.examserver.util.TextSim;
 import org.apache.tika.Tika;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -306,6 +305,7 @@ public class QuestionController {
             @RequestParam(name = "to", required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
             @RequestParam(name = "q", required = false) String q,
+            @RequestParam(name="flagged", required=false) Boolean flagged,
             @PageableDefault(size = 20, sort = "createdAt", direction = org.springframework.data.domain.Sort.Direction.DESC)
             Pageable pageable,
             Authentication auth
@@ -321,7 +321,7 @@ public class QuestionController {
         filter.setFrom(from);
         filter.setTo(to);
         filter.setQ(q);
-
+        filter.setFlagged(flagged);
         Page<QuestionDTO> page = questionService.pageBySubject(subjectId, filter, pageable);
 
         if (!privileged) {
