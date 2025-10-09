@@ -270,4 +270,88 @@ public class FileArchiveService {
                 ". Lý do: " + reason + "." + dl;
         notif.create(fa.getUserId(), title, msg, Instant.now().plus(Duration.ofDays(14)));
     }
+
+    // --- NEW: nộp bài (PENDING) lưu vào tmp/, trả FileArchive để lấy id ---
+    @Transactional
+    public FileArchive savePendingSubmission(Long subjectId, Long userId,
+                                             String filename, String mimeType,
+                                             byte[] data, Map<String, Object> meta) throws Exception {
+        String safeName = sanitizeFilename(filename);
+        String key = "tmp/" + UUID.randomUUID() + "_" + safeName;
+
+        gcs.putBytes(key, mimeType == null ? "application/octet-stream" : mimeType, data);
+
+        FileArchive fa = new FileArchive();
+        fa.setKind("SUBMISSION");
+        fa.setSubjectId(subjectId);
+        fa.setUserId(userId);
+        fa.setFilename(safeName);
+        fa.setMimeType(mimeType == null ? "application/octet-stream" : mimeType);
+        fa.setSizeBytes(data.length);
+        fa.setSha256(DigestUtils.sha256Hex(data));
+        fa.setStorage("GCS");
+        fa.setStorageKey(key);
+        fa.setPublicUrl("");
+        fa.setMetaJson(meta == null ? "{}" : om.writeValueAsString(meta));
+        fa.setReviewStatus(ReviewStatus.PENDING);
+        fa.setSubmittedAt(Instant.now());
+
+        // optional: set variant/format nếu cần (giống savePendingExport)
+        if (meta != null) {
+            String v = String.valueOf(meta.getOrDefault("variant", "")).toUpperCase();
+            if ("EXAM".equals(v))      fa.setVariant(ArchiveVariant.EXAM);
+            else if ("PRACTICE".equals(v)) fa.setVariant(ArchiveVariant.PRACTICE);
+
+            String fmt = String.valueOf(meta.getOrDefault("format","")).toUpperCase();
+            if ("PDF".equals(fmt) || "DOCX".equals(fmt) || "WORD".equals(fmt)) {
+                fa.setExportFormat("WORD".equals(fmt) ? "DOCX" : fmt);
+            }
+        }
+
+        fa = fileRepo.save(fa);
+
+        // thông báo HEAD: có file nộp chờ duyệt
+        notifyHeadOnPending(subjectId, userId, safeName);
+        // tùy chọn: thông báo lại cho GV
+        notif.create(userId, "Đã nộp bài chờ duyệt",
+                "Bạn đã nộp \"" + safeName + "\" để chờ duyệt.", Instant.now().plus(Duration.ofDays(7)));
+
+        return fa;
+    }
+
+    // --- NEW: duyệt bài nộp (move tmp/ -> archives/, mark APPROVED) ---
+    @Transactional
+    public void approveSubmission(Long archiveId, Long reviewerId) {
+        approve(archiveId, reviewerId); // tái dùng logic approve() đã có
+    }
+
+    public Optional<FileArchive> find(Long id) {
+        return fileRepo.findById(id);
+    }
+
+    @Transactional
+    public FileArchive replacePendingSubmission(Long existingIdOrNull,
+                                                Long subjectId, Long userId,
+                                                String filename, String mimeType,
+                                                byte[] data, Map<String, Object> meta) throws Exception {
+        if (existingIdOrNull != null) {
+            var oldOpt = fileRepo.findById(existingIdOrNull);
+            if (oldOpt.isPresent()) {
+                var old = oldOpt.get();
+                var st = old.getReviewStatus();
+                if (st == ReviewStatus.APPROVED) {
+                    // đã duyệt thì không cho resubmit
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                            "Bài nộp trước đã được duyệt. Không thể nộp lại.");
+                } else if (st == ReviewStatus.PENDING) {
+                    // xoá bản cũ để tránh rác
+                    delete(existingIdOrNull);
+                } else if (st == ReviewStatus.REJECTED) {
+                    // giữ lại record bị từ chối để audit (không xoá)
+                }
+            }
+        }
+        // tạo pending mới
+        return savePendingSubmission(subjectId, userId, filename, mimeType, data, meta);
+    }
 }

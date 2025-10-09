@@ -7,6 +7,9 @@ import org.springframework.data.jpa.repository.*;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
 
 public interface ExamTaskRepository extends JpaRepository<ExamTask, Long>, JpaSpecificationExecutor<ExamTask> {
 
@@ -36,5 +39,8 @@ public interface ExamTaskRepository extends JpaRepository<ExamTask, Long>, JpaSp
                           @Param("from") Instant from,
                           @Param("to") Instant to,
                           Pageable p);
+
+    Optional<ExamTask> findFirstBySubmissionArchiveId(Long submissionArchiveId);
+    List<ExamTask> findAllBySubmissionArchiveIdIn(Collection<Long> ids);
 }
 

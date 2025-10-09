@@ -37,10 +37,7 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.net.URL;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 import static com.exam.examserver.util.ImportRegex.normalizeStem;
@@ -452,6 +449,7 @@ public class ExportQuestionService {
                 lastChapter = chapter;
             }
 
+            finalizeDocx(doc);
             doc.write(baos);
             return baos.toByteArray();
         }
@@ -517,6 +515,7 @@ public class ExportQuestionService {
             // ===== Footer đề thi =====
             writeExamFooter(doc);
 
+            finalizeDocx(doc);
             doc.write(baos);
             return baos.toByteArray();
         }
@@ -996,6 +995,7 @@ public class ExportQuestionService {
                 final boolean hasStem = (stemClean != null && !stemClean.isBlank());
 
                 char mark = 'a';
+
                 for (int j = 0; j < subIds.size(); j++) {
                     Long qid = subIds.get(j);
                     QuestionDTO q = qById.get(qid);
@@ -1005,14 +1005,18 @@ public class ExportQuestionService {
                     String content = prettyMathSpaces(safeText(q.getContent()));
 
                     if (multi && j == 0 && hasStem) {
-                        // Dòng 1: "a) <stem>" (trái)
-                        writeContentSmart(doc, "a) " + stemClean);
-                        // Dòng 2: nội dung ý a) căn giữa (không lặp lại "a) ")
+                        // Dòng 1: "a) <stem>"
+                        writeContentSmart(doc, String.valueOf(mark) + ") " + stemClean);
+                        // Sau khi in stem, chuyển sang 'b' cho ý tiếp theo
+                        mark++;
+
+                        // Dòng 2: nội dung ý a) căn giữa (không có tiền tố "a) ")
                         writeContentSmartAligned(doc, content, ParagraphAlignment.CENTER);
                     } else {
-                        // Ý đơn hoặc b), c), d) ...
-                        String prefix = multi ? (mark++ + ") ") : "";
+                        // Ý đơn hoặc các ý b), c), d)...
+                        String prefix = multi ? (String.valueOf(mark) + ") ") : "";
                         writeContentSmart(doc, prefix + content);
+                        if (multi) mark++; // tăng sau khi dùng
                     }
 
                     // Ảnh (giữ nguyên)
@@ -1031,12 +1035,14 @@ public class ExportQuestionService {
                         writeOptionIfPresent(doc, pad + "d) ", q.getOptionD());
                     }
                 }
+
                 doc.createParagraph(); // khoảng cách giữa câu
             }
 
             // Footer
             writeExamFooter(doc);
 
+            finalizeDocx(doc);
             doc.write(baos);
             return baos.toByteArray();
         }
@@ -1066,7 +1072,16 @@ public class ExportQuestionService {
             for (int k = 0; k < N; k++) {
                 tbl.getRow(0).getCell(k + 1).setText("Đề " + (k + 1));
             }
-
+            List<Long> allIds = new ArrayList<>();
+            for (int r = 0; r < R; r++) {
+                var row = resp.rows.get(r);
+                for (int k = 0; k < N; k++) {
+                    var cell = row.columns.get(k);
+                    if (cell != null && cell.questionIds != null) allIds.addAll(cell.questionIds);
+                }
+            }
+            Map<Long, QuestionDTO> byId = questionService.findByIds(allIds).stream()
+                    .collect(Collectors.toMap(QuestionDTO::getId, q -> q));
             // Body
             for (int r = 0; r < R; r++) {
                 AutoGenRowDTO row = resp.rows.get(r);
@@ -1074,12 +1089,18 @@ public class ExportQuestionService {
                 tbl.getRow(r + 1).getCell(0).setText(title);
 
                 for (int k = 0; k < N; k++) {
-                    var cell = row.columns.get(k);
-                    String ids = (cell == null || cell.questionIds == null || cell.questionIds.isEmpty())
-                            ? ""
-                            : cell.questionIds.stream().map(String::valueOf)
-                            .collect(Collectors.joining(" "));
-                    tbl.getRow(r + 1).getCell(k + 1).setText(ids);
+                    var cell = resp.rows.get(r).columns.get(k);
+                    String txt = "";
+                    if (cell != null && cell.questionIds != null && !cell.questionIds.isEmpty()) {
+                        txt = cell.questionIds.stream()
+                                .map(id -> {
+                                    QuestionDTO q = byId.get(id);
+                                    String code = (q == null ? null : q.getQuestionCode());
+                                    return (code == null || code.isBlank()) ? String.valueOf(id) : code;
+                                })
+                                .collect(Collectors.joining("\n")); // mỗi ý xuống dòng
+                    }
+                    tbl.getRow(r + 1).getCell(k + 1).setText(txt);
                 }
             }
 
@@ -1093,6 +1114,7 @@ public class ExportQuestionService {
                 tbl.getRow(R + 1).getCell(k + 1).setText(tp);
             }
 
+            finalizeDocx(doc);
             doc.write(baos);
             return baos.toByteArray();
         }
@@ -1123,6 +1145,66 @@ public class ExportQuestionService {
         if (x == null) return null;
         x = x.stripTrailingZeros();
         return x.toPlainString(); // "2" thay vì "2.00"
+    }
+
+    // 1) Luôn có sectPr
+    private void ensureSectPr(XWPFDocument doc) {
+        var ctDoc = doc.getDocument();
+        var body  = ctDoc.getBody() != null ? ctDoc.getBody() : ctDoc.addNewBody();
+        if (!body.isSetSectPr()) body.addNewSectPr();
+    }
+
+    // 2) Đặt width bảng theo DXA thay vì "%"
+    private void forceTableWidthDXA(XWPFTable tbl, int widthTwips) {
+        CTTbl ct = tbl.getCTTbl();
+
+        // pr
+        CTTblPr pr = ct.getTblPr();
+        if (pr == null) pr = ct.addNewTblPr();
+
+        // width
+        CTTblWidth w = pr.getTblW();
+        if (w == null) w = pr.addNewTblW();
+        w.setType(STTblWidth.DXA);
+        w.setW(java.math.BigInteger.valueOf(widthTwips));
+    }
+
+    // 3) Quét & làm sạch control chars toàn bộ paragraph run
+    private static String stripCtrl(String s) {
+        if (s == null) return null;
+        return s
+                .replace("\uFEFF", "")   // BOM
+                .replace("\u200B", "")   // zero width space
+                .replace("\u2060", "")   // word joiner
+                // loại các control char còn lại
+                .replaceAll("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F]", "");
+    }
+
+    private void sanitizeAllRuns(XWPFDocument doc) {
+        for (var p : doc.getParagraphs()) {
+            for (var r : p.getRuns()) {
+                r.setText(stripCtrl(r.text()), 0);
+            }
+        }
+        for (var t : doc.getTables()) {
+            for (var row : t.getRows()) {
+                for (var cell : row.getTableCells()) {
+                    for (var p : cell.getParagraphs()) {
+                        for (var r : p.getRuns()) {
+                            r.setText(stripCtrl(r.text()), 0);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 4) Gọi chung trước khi write()
+    private void finalizeDocx(XWPFDocument doc) {
+        ensureSectPr(doc);
+        // ép width cho các bảng bạn tạo theo %:
+        for (var tbl : doc.getTables()) forceTableWidthDXA(tbl, 9072); // ~ 6.3"
+        sanitizeAllRuns(doc);
     }
 
 }

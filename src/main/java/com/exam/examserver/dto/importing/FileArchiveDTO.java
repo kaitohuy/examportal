@@ -7,6 +7,7 @@ public record FileArchiveDTO(
         Long subjectId, Long userId, Instant createdAt,
         String uploaderName, String subjectName,
         String variant, String reviewStatus, String reviewNote, Instant reviewDeadline,
-        Instant reviewedAt, Long reviewedById, String reviewedByName
+        Instant reviewedAt, Long reviewedById, String reviewedByName,
+        Long linkedTaskId, String linkedTaskStatus
 ) {}
 

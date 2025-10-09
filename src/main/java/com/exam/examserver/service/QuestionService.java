@@ -28,4 +28,6 @@ public interface QuestionService {
     Page<QuestionDTO> pageBySubject(Long subjectId, QuestionFilter filter, Pageable pageable);
     List<Long> findIdsByFilter(Long subjectId, QuestionFilter filter);
     int deleteAllByIds(List<Long> ids);
+    void updateQuestionCode(Long questionId, String code);
+    boolean codeExists(Long subjectId, String code);
 }

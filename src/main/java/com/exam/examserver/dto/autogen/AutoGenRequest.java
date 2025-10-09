@@ -7,5 +7,6 @@ public class AutoGenRequest {
     public boolean noRepeatWithinPaper = true;
     public boolean noRepeatAcrossPapers = true;
     public List<AutoGenStepDTO> steps;       // thứ tự chính là cấu trúc đề
+    public List<String> labels;
 }
 

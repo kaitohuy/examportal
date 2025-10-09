@@ -133,17 +133,18 @@ public class AutoGenController {
         meta.put("totalPerPaper", resp.paperTotals == null ? null :
                 Arrays.stream(resp.paperTotals).map(BigDecimal::toPlainString).toList());
         meta.put("rows", resp.rows == null ? 0 : resp.rows.size());
-
+        meta.put("labelScope", (effective.labels == null || effective.labels.isEmpty())
+                ? "ALL" : effective.labels);
         String finalName = (fileName == null || fileName.isBlank() ? "Auto_De" : fileName) + ".zip";
         // mới: lưu vào tmp, đặt trạng thái PENDING để duyệt
-        fileArchiveService.savePendingExport(
-                subjectId,
-                me.getId(),
-                finalName,                     // chú ý: chỉ basename, KHÔNG chứa "archives/"
-                "application/zip",
-                zipBytes,
-                meta
-        );
+//        fileArchiveService.savePendingExport(
+//                subjectId,
+//                me.getId(),
+//                finalName,                     // chú ý: chỉ basename, KHÔNG chứa "archives/"
+//                "application/zip",
+//                zipBytes,
+//                meta
+//        );
 
         // 5) Trả về file cho client
         HttpHeaders headers = new HttpHeaders();

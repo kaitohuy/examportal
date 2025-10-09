@@ -4,14 +4,18 @@ import com.exam.examserver.config.ScopeResolver;
 import com.exam.examserver.dto.importing.FileArchiveDTO;
 import com.exam.examserver.dto.importing.PageDTO;
 import com.exam.examserver.enums.ArchiveVariant;
+import com.exam.examserver.enums.ExamTaskStatus;
 import com.exam.examserver.enums.ReviewStatus;
 import com.exam.examserver.enums.RoleType;
+import com.exam.examserver.model.exam.ExamTask;
 import com.exam.examserver.model.exam.FileArchive;
 import com.exam.examserver.model.exam.Subject;
 import com.exam.examserver.model.user.User;
+import com.exam.examserver.repo.ExamTaskRepository;
 import com.exam.examserver.repo.FileArchiveRepository;
 import com.exam.examserver.repo.SubjectRepository;
 import com.exam.examserver.repo.UserRepository;
+import com.exam.examserver.service.impl.ExamTaskService;
 import com.exam.examserver.service.import_export.FileArchiveService;
 import com.exam.examserver.storage.GcsObjectHelper;
 import com.exam.examserver.storage.GcsSignedUrl;
@@ -41,13 +45,15 @@ public class FileArchiveController {
     private final GcsSignedUrl signer;
     private final GcsObjectHelper gcs;
     private final ScopeResolver scopeResolver;
+    private final ExamTaskRepository taskRepository;
+    private final ExamTaskService examTaskService;
 
     public FileArchiveController(FileArchiveService service,
                                  FileArchiveRepository fileRepo,
                                  UserRepository userRepo,
                                  SubjectRepository subjectRepo,
                                  GcsSignedUrl signer,
-                                 GcsObjectHelper gcs, ScopeResolver scopeResolver) {
+                                 GcsObjectHelper gcs, ScopeResolver scopeResolver, ExamTaskRepository taskRepository, ExamTaskService examTaskService) {
         this.service = service;
         this.fileRepo = fileRepo;
         this.userRepo = userRepo;
@@ -55,6 +61,8 @@ public class FileArchiveController {
         this.signer = signer;
         this.gcs = gcs;
         this.scopeResolver = scopeResolver;
+        this.taskRepository = taskRepository;
+        this.examTaskService = examTaskService;
     }
 
     // ================= LIST + FILTER =================
@@ -63,14 +71,15 @@ public class FileArchiveController {
             @RequestParam(required = false) Long subjectId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
-            @RequestParam(required = false) String kind,      // IMPORT/EXPORT
-            @RequestParam(required = false) String q,         // filename
-            @RequestParam(required = false) String subject,   // subject name/code
-            @RequestParam(required = false) String uploader,  // username/full name
-            @RequestParam(required = false) String from,      // yyyy-MM-dd
-            @RequestParam(required = false) String to,        // yyyy-MM-dd
+            @RequestParam(required = false) String kind,      // IMPORT/EXPORT/SUBMISSION
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String subject,
+            @RequestParam(required = false) String uploader,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to,
             @RequestParam(required = false) String variant,   // EXAM | PRACTICE
-            @RequestParam(required = false) String reviewStatus // "APPROVED", "REJECTED" hoặc "APPROVED,REJECTED"
+            @RequestParam(required = false) String reviewStatus,
+            @RequestParam(required = false) Long linkedTaskId // <-- NEW
     ) {
         size = Math.min(Math.max(size, 1), 100);
         Pageable p = PageRequest.of(page, size,
@@ -113,8 +122,19 @@ public class FileArchiveController {
         if (usrIds != null && usrIds.isEmpty())  return PageDTO.from(Page.empty(p));
 
         Specification<FileArchive> spec = scopeSpec();
-        // ---- dynamic specs
         List<Specification<FileArchive>> specs = new ArrayList<>();
+        if (linkedTaskId != null) {
+            var optTask = taskRepository.findById(linkedTaskId);
+            if (optTask.isEmpty() || optTask.get().getSubmissionArchiveId() == null) {
+                return PageDTO.from(Page.empty(p)); // chưa nộp gì -> rỗng
+            }
+            Long archiveId = optTask.get().getSubmissionArchiveId();
+            specs.add((root, cq, cb) -> cb.equal(root.get("id"), archiveId));
+            // tuỳ chọn, “chắc kèo”:
+            specs.add((root, cq, cb) -> cb.equal(cb.upper(root.get("kind")), "SUBMISSION"));
+            // nếu muốn tự ép Pending ở BE khi có linkedTaskId (không bắt buộc):
+            // specs.add((root, cq, cb) -> cb.equal(root.get("reviewStatus"), ReviewStatus.PENDING));
+        }
         if (subjectId != null) specs.add((root, cq, cb) -> cb.equal(root.get("subjectId"), subjectId));
         if (subjIds != null)   specs.add((root, cq, cb) -> root.get("subjectId").in(subjIds));
         if (kk != null)        specs.add((root, cq, cb) -> cb.equal(root.get("kind"), kk));
@@ -156,6 +176,11 @@ public class FileArchiveController {
                 : userRepo.findAllById(reviewerIds).stream()
                 .collect(Collectors.toMap(User::getId, FileArchiveController::displayName));
 
+        Set<Long> faIds = rs.getContent().stream().map(FileArchive::getId).collect(Collectors.toSet());
+        Map<Long, ExamTask> linkMap = faIds.isEmpty() ? Map.of()
+                : taskRepository.findAllBySubmissionArchiveIdIn(faIds).stream()
+                .collect(Collectors.toMap(ExamTask::getSubmissionArchiveId, t -> t));
+
         Page<FileArchiveDTO> mapped = rs.map(f -> {
             Long uid = f.getUserId();
             Long sid = f.getSubjectId();
@@ -164,6 +189,8 @@ public class FileArchiveController {
             String uploaderNameSafe  = (uid != null) ? uploaderMap.getOrDefault(uid, "User #" + uid) : "";
             String subjectNameSafe   = (sid != null) ? subjectMap.getOrDefault(sid, "") : "";
             String reviewedByNameSafe= (rid != null) ? reviewerMap.getOrDefault(rid, "") : "";
+            ExamTask linked = linkMap.get(f.getId());
+            String linkedTaskStatus = (linked != null && linked.getStatus()!=null) ? linked.getStatus().name() : null;
 
             return new FileArchiveDTO(
                     f.getId(), f.getFilename(), f.getMimeType(), f.getSizeBytes(), f.getKind(),
@@ -173,7 +200,8 @@ public class FileArchiveController {
                     f.getVariant() == null ? null : f.getVariant().name(),
                     f.getReviewStatus() == null ? null : f.getReviewStatus().name(),
                     f.getReviewNote(), f.getReviewDeadline(),
-                    f.getReviewedAt(), f.getReviewedById(), reviewedByNameSafe
+                    f.getReviewedAt(), f.getReviewedById(), reviewedByNameSafe,
+                    linkedTaskId, linkedTaskStatus
             );
         });
 
@@ -269,27 +297,61 @@ public class FileArchiveController {
         return new UrlDTO(url);
     }
 
+    // FileArchiveController
     @PostMapping("/{id}/approve")
-    public ResponseEntity<Void> approve(@PathVariable Long id,
-                                        @RequestParam(required = false) Long reviewerId) {
+    public ResponseEntity<Map<String,Object>> approve(
+            @PathVariable Long id,
+            @RequestParam(required=false) Long reviewerId,
+            @RequestParam(defaultValue="false") boolean approveTask
+    ) {
         var fa = fileRepo.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
-        ensureModeratable(fa); // NEW
+        ensureModeratable(fa);
         Long rid = (reviewerId != null) ? reviewerId : currentUserIdOrNull();
+
         service.approve(id, rid);
-        return ResponseEntity.noContent().build();
+
+        boolean taskApproved = false;
+        Long taskId = null;
+        if (approveTask) {
+            var opt = taskRepository.findFirstBySubmissionArchiveId(id);
+            if (opt.isPresent()) {
+                var t = opt.get();
+                if (t.getStatus() == ExamTaskStatus.SUBMITTED
+                        || t.getStatus() == ExamTaskStatus.RETURNED) {
+                    examTaskService.headApproveDone(rid, t.getId()); // inject examTaskService
+                    taskApproved = true;
+                    taskId = t.getId();
+                }
+            }
+        }
+        return ResponseEntity.ok(Map.of("approved", true, "taskApproved", taskApproved, "taskId", taskId));
     }
 
     @PostMapping("/{id}/reject")
     public ResponseEntity<Void> reject(@PathVariable Long id,
                                        @RequestBody Map<String, String> body,
-                                       @RequestParam(required = false) Long reviewerId) {
+                                       @RequestParam(required = false) Long reviewerId,
+                                       @RequestParam(defaultValue = "false") boolean rejectTask) {
         var fa = fileRepo.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
-        ensureModeratable(fa); // NEW
+        ensureModeratable(fa);
+
         final String reason = Optional.ofNullable(body.get("reason")).orElse("").trim();
         final String rawDl  = body.get("deadline");
         final Instant deadlineTs = parseDeadlineFlexible(rawDl);
+
         Long rid = (reviewerId != null) ? reviewerId : currentUserIdOrNull();
+
+        // 1) Từ chối file
         service.reject(id, rid, reason, deadlineTs);
+
+        // 2) Nếu cần thì đẩy task SUBMITTED về trạng thái yêu cầu nộp lại
+        if (rejectTask) {
+            taskRepository.findFirstBySubmissionArchiveId(id).ifPresent(t -> {
+                if (t.getStatus() == ExamTaskStatus.SUBMITTED) {
+                    examTaskService.headReturnForRevision(rid, t.getId(), reason);
+                }
+            });
+        }
         return ResponseEntity.noContent().build();
     }
 

@@ -59,6 +59,70 @@ public class ExamTask {
     @Column(nullable = false)
     private Instant updatedAt;
 
+    // thời điểm và ghi chú khi GV nộp bài
+    private Instant submittedAt;
+    private Long submissionArchiveId;      // id bản ghi file_archive tạm (PENDING, path tmp/)
+    private String submissionNote;
+
+    // báo lỗi
+    private Instant reportedAt;
+    private String reportNote;
+    // ==== REVIEW META (HEAD) ====
+    private Long reviewedById;   // user id của HEAD đã review lần gần nhất
+    private String reviewNote;   // lý do từ chối / ghi chú review
+    private Instant reviewedAt;  // thời điểm review gần nhất
+
+    // ===== getters/setters =====
+    public Long getReviewedById() { return reviewedById; }
+    public void setReviewedById(Long reviewedById) { this.reviewedById = reviewedById; }
+
+    public String getReviewNote() { return reviewNote; }
+    public void setReviewNote(String reviewNote) { this.reviewNote = reviewNote; }
+
+    public Instant getReviewedAt() { return reviewedAt; }
+    public void setReviewedAt(Instant reviewedAt) { this.reviewedAt = reviewedAt; }
+
+
+    public Instant getSubmittedAt() {
+        return submittedAt;
+    }
+
+    public void setSubmittedAt(Instant submittedAt) {
+        this.submittedAt = submittedAt;
+    }
+
+    public Long getSubmissionArchiveId() {
+        return submissionArchiveId;
+    }
+
+    public void setSubmissionArchiveId(Long submissionArchiveId) {
+        this.submissionArchiveId = submissionArchiveId;
+    }
+
+    public String getSubmissionNote() {
+        return submissionNote;
+    }
+
+    public void setSubmissionNote(String submissionNote) {
+        this.submissionNote = submissionNote;
+    }
+
+    public Instant getReportedAt() {
+        return reportedAt;
+    }
+
+    public void setReportedAt(Instant reportedAt) {
+        this.reportedAt = reportedAt;
+    }
+
+    public String getReportNote() {
+        return reportNote;
+    }
+
+    public void setReportNote(String reportNote) {
+        this.reportNote = reportNote;
+    }
+
     public Long getId() {
         return id;
     }
@@ -163,5 +227,4 @@ public class ExamTask {
         this.updatedAt = updatedAt;
     }
 
-    // getters/setters...
 }

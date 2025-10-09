@@ -23,4 +23,9 @@ public class PreviewBlock {
     public List<String> warnings = new ArrayList<>();
     public Double duplicateScore;
     public List<Long> duplicateOfIds;
+
+    public String headerNo;        // "1.1" / "2.1.1" ...
+    public String previewPrefix;   // "OT"/"TC"
+    public String previewCode;     // nếu câu đơn
+    public List<String> previewSubCodes; // nếu tách a)/b)/c)
 }

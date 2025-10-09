@@ -1,5 +1,7 @@
 package com.exam.examserver.controller;
 
+import com.exam.examserver.dto.ai.AiSuggestRequest;
+import com.exam.examserver.dto.ai.AiSuggestResponse;
 import com.exam.examserver.dto.exam.BulkSelectionRequest;
 import com.exam.examserver.dto.exam.CreateQuestionDTO;
 import com.exam.examserver.dto.exam.QuestionDTO;
@@ -14,6 +16,7 @@ import com.exam.examserver.model.exam.CloneRequest;
 import com.exam.examserver.model.exam.Subject;
 import com.exam.examserver.model.user.CustomUserDetails;
 import com.exam.examserver.dto.importing.ImportPreviewStore;
+import com.exam.examserver.service.AiSuggestService;
 import com.exam.examserver.service.SubjectService;
 import com.exam.examserver.service.import_export.FileArchiveService;
 import com.exam.examserver.service.import_export.ImportQuestionService;
@@ -32,6 +35,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 @RestController
 @RequestMapping("/subject/{subjectId}/questions")
@@ -44,20 +48,24 @@ public class QuestionController {
     private final ImportQuestionService importService;
     private final ImportPreviewStore previewStore;
     private final FileArchiveService fileArchiveService;
+    private final AiSuggestService aiSuggestService;
     private final Tika tika = new Tika();
+    private final Map<Long, Deque<Long>> aiBuckets = new ConcurrentHashMap<>();
+
 
     public QuestionController(QuestionService questionService,
                               SubjectService subjectService,
                               ExportQuestionService exportQuestionService,
                               ImportQuestionService importService,
                               ImportPreviewStore previewStore,
-                              FileArchiveService fileArchiveService) {
+                              FileArchiveService fileArchiveService, AiSuggestService aiSuggestService) {
         this.questionService = questionService;
         this.subjectService = subjectService;
         this.exportQuestionService = exportQuestionService;
         this.importService = importService;
         this.previewStore = previewStore;
         this.fileArchiveService = fileArchiveService;
+        this.aiSuggestService = aiSuggestService;
     }
 
     @GetMapping("/{questionId}")
@@ -363,5 +371,35 @@ public class QuestionController {
         }
         int deleted = questionService.deleteAllByIds(ids);
         return ResponseEntity.ok(Map.of("deleted", deleted, "requested", ids.size()));
+    }
+
+    @PostMapping("/ai/suggest")
+    public AiSuggestResponse suggestAnswer(@PathVariable Long subjectId,
+                                           @RequestBody AiSuggestRequest req,
+                                           @AuthenticationPrincipal CustomUserDetails me,
+                                           Authentication auth) {
+        guardRate(me.getId());
+        // quyền tối thiểu: TEACHER/HEAD/ADMIN
+        boolean allowed = auth != null && auth.getAuthorities().stream()
+                .anyMatch(a -> Set.of("ADMIN","HEAD","TEACHER").contains(a.getAuthority()));
+        if (!allowed) {
+            throw new org.springframework.security.access.AccessDeniedException("Forbidden");
+        }
+        return aiSuggestService.suggest(req);
+    }
+
+    private void guardRate(Long userId) {
+        long now = System.currentTimeMillis(), oneMinAgo = now - 60_000L, oneSecAgo = now - 1000L;
+        var q = aiBuckets.computeIfAbsent(userId, k -> new ArrayDeque<>());
+        synchronized (q) {
+            while (!q.isEmpty() && q.peekFirst() < oneMinAgo) q.pollFirst();
+            long last = q.isEmpty() ? 0 : q.peekLast();
+            if (last > oneSecAgo) throw new LocalRateLimitException("Too fast, wait a second");
+            if (q.size() >= 30) throw new LocalRateLimitException("Too many in a minute");
+            q.addLast(now);
+        }
+    }
+    public static class LocalRateLimitException extends RuntimeException {
+        public LocalRateLimitException(String msg) { super(msg); }
     }
 }

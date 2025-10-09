@@ -6,6 +6,7 @@ import com.exam.examserver.enums.*;
 import com.exam.examserver.model.exam.QuestionMeta;
 import com.exam.examserver.repo.QuestionBundleRepository;
 import com.exam.examserver.repo.QuestionMetaRepository;
+import com.exam.examserver.repo.QuestionRepository;
 import com.exam.examserver.repo.spec.QuestionMetaSpecs;
 import com.exam.examserver.service.QuestionMetaService;
 import org.springframework.data.jpa.domain.Specification;
@@ -23,17 +24,36 @@ public class AutoPaperService {
     private final QuestionMetaRepository metaRepo;
     private final QuestionMetaService metaService;
     private final QuestionBundleRepository bundleRepo;
+    private final QuestionRepository questionRepo;
 
-    public AutoPaperService(QuestionMetaRepository metaRepo, QuestionMetaService metaService, QuestionBundleRepository bundleRepo) {
+    public AutoPaperService(QuestionMetaRepository metaRepo,
+                            QuestionMetaService metaService,
+                            QuestionBundleRepository bundleRepo,
+                            QuestionRepository questionRepo) {
         this.metaRepo = metaRepo;
         this.metaService = metaService;
         this.bundleRepo = bundleRepo;
+        this.questionRepo = questionRepo;
     }
 
     /* ========= PREVIEW ========= */
     public AutoGenPreviewResponse preview(Long subjectId, AutoGenRequest req) {
         Objects.requireNonNull(req);
         int N = Math.max(1, req.variants);
+
+        // Parse label scope từ request
+        LabelScope labelScope = parseLabels(req);
+
+        // Tập questionId hợp lệ theo nhãn (để post-filter pool meta)
+        Set<Long> allowedLabelIds;
+        if (!labelScope.empty) {
+            List<Long> ids = questionRepo.findApprovedIdsByScopeAndLabels(
+                    subjectId, null, labelScope.enums, false
+            );
+            allowedLabelIds = new HashSet<>(ids);
+        } else {
+            allowedLabelIds = null;
+        }
 
         // --- Default steps ---
         if (req.steps == null || req.steps.isEmpty()) {
@@ -141,24 +161,30 @@ public class AutoPaperService {
                     AutoGenSelectorDTO sel = step.selectors.get(selIdx);
 
                     if (sel.unitKind == UnitKind.FULL_QUESTION) {
-                        boolean ok;
+                        BigDecimal inc;
                         if (sel.typeCodeIn != null && !sel.typeCodeIn.isEmpty()) {
-                            ok = handleBundleByType(subjectId, sel, stepIdx, selIdx,
-                                    usedInPaper, globalUsed, pickedForCell, out, sumPts);
+                            inc = handleBundleByType(subjectId, sel, stepIdx, selIdx,
+                                    usedInPaper, globalUsed, pickedForCell, out, labelScope);
                         } else if (sel.chapterIn != null && !sel.chapterIn.isEmpty()) {
-                            ok = handleBundleByChapter(subjectId, sel, stepIdx, selIdx,
-                                    usedInPaper, globalUsed, pickedForCell, out, sumPts);
+                            inc = handleBundleByChapter(subjectId, sel, stepIdx, selIdx,
+                                    usedInPaper, globalUsed, pickedForCell, out, labelScope);
                         } else {
-                            ok = handleSingleFull(subjectId, sel, stepIdx, selIdx,
-                                    usedInPaper, globalUsed, pickedForCell, out, sumPts);
+                            inc = handleSingleFull(subjectId, sel, stepIdx, selIdx,
+                                    usedInPaper, globalUsed, pickedForCell, out, allowedLabelIds);
                         }
-                        if (!ok) { starvation = true; break; }
+                        if (inc == null) { starvation = true; break; }
+                        sumPts = sumPts.add(inc);
                         continue;
                     }
 
                     // ========= CASE B: SUB_ITEM =========
                     Specification<QuestionMeta> spec = buildSpec(subjectId, sel);
                     List<QuestionMeta> pool = metaRepo.findAll(spec);
+                    if (allowedLabelIds != null) {
+                        pool = pool.stream()
+                                .filter(m -> allowedLabelIds.contains(m.getQuestionId()))
+                                .toList();
+                    }
                     if (pool.isEmpty()) {
                         out.errors.add("Step#" + (stepIdx+1) + " selector#" + (selIdx+1) + " không có item nào.");
                         starvation = true; break;
@@ -197,16 +223,22 @@ public class AutoPaperService {
         return out;
     }
 
-    private boolean handleSingleFull(Long subjectId, AutoGenSelectorDTO sel,
-                                     int stepIdx, int selIdx,
-                                     Set<Long> usedInPaper, Set<Long> globalUsed,
-                                     List<Long> pickedForCell,
-                                     AutoGenPreviewResponse out, BigDecimal sumPts) {
+    private BigDecimal handleSingleFull(Long subjectId, AutoGenSelectorDTO sel,
+                                        int stepIdx, int selIdx,
+                                        Set<Long> usedInPaper, Set<Long> globalUsed,
+                                        List<Long> pickedForCell,
+                                        AutoGenPreviewResponse out,
+                                        Set<Long> allowedLabelIds) {
         Specification<QuestionMeta> spec = buildSpec(subjectId, sel);
         List<QuestionMeta> pool = metaRepo.findAll(spec);
+        if (allowedLabelIds != null) {
+            pool = pool.stream()
+                    .filter(m -> allowedLabelIds.contains(m.getQuestionId()))
+                    .toList();
+        }
         if (pool.isEmpty()) {
             out.errors.add("Step#" + (stepIdx+1) + " selector#" + (selIdx+1) + " (single full) không có item.");
-            return false;
+            return null;
         }
 
         Set<Long> banned = new HashSet<>();
@@ -216,31 +248,40 @@ public class AutoPaperService {
 
         List<QuestionMeta> candidates = pool.stream()
                 .filter(m -> !banned.contains(m.getQuestionId()))
-                .collect(Collectors.toList());
+                .toList();
         if (candidates.isEmpty()) {
             out.errors.add("Step#" + (stepIdx+1) + " selector#" + (selIdx+1) + " (single full) hết do no-repeat.");
-            return false;
+            return null;
         }
 
         QuestionMeta chosen = candidates.get(ThreadLocalRandom.current().nextInt(candidates.size()));
         pickedForCell.add(chosen.getQuestionId());
-        sumPts = sumPts.add(chosen.getPoints() == null ? BigDecimal.ZERO : chosen.getPoints());
-        return true;
+        return chosen.getPoints() == null ? BigDecimal.ZERO : chosen.getPoints();
     }
 
-    private boolean handleBundleByChapter(Long subjectId, AutoGenSelectorDTO sel,
-                                          int stepIdx, int selIdx,
-                                          Set<Long> usedInPaper, Set<Long> globalUsed,
-                                          List<Long> pickedForCell,
-                                          AutoGenPreviewResponse out, BigDecimal sumPts) {
+    private BigDecimal handleBundleByChapter(Long subjectId, AutoGenSelectorDTO sel,
+                                             int stepIdx, int selIdx,
+                                             Set<Long> usedInPaper, Set<Long> globalUsed,
+                                             List<Long> pickedForCell,
+                                             AutoGenPreviewResponse out,
+                                             LabelScope labelScope) {
         Integer chapter = (sel.chapterIn != null && !sel.chapterIn.isEmpty()) ? sel.chapterIn.get(0) : null;
-        BigDecimal minPts = (sel.pointsEq != null ? sel.pointsEq : BigDecimal.ZERO);
-        BigDecimal maxPts = (sel.pointsEq != null ? sel.pointsEq : new BigDecimal("9999"));
+        BigDecimal minPts = (sel.pointsEq != null ? sel.pointsEq :
+                (sel.pointsMin != null ? sel.pointsMin : BigDecimal.ZERO));
+        BigDecimal maxPts = (sel.pointsEq != null ? sel.pointsEq :
+                (sel.pointsMax != null ? sel.pointsMax : new BigDecimal("9999")));
 
-        List<Long> bundleIds = bundleRepo.findCandidateBundleIds(subjectId, chapter, minPts, maxPts);
+        List<Long> bundleIds;
+        if (labelScope.empty) {
+            bundleIds = bundleRepo.findCandidateBundleIds(subjectId, chapter, minPts, maxPts);
+        } else {
+            bundleIds = bundleRepo.findCandidateBundleIdsByLabels(
+                    subjectId, chapter, minPts, maxPts, labelScope.enums, false
+            );
+        }
         if (bundleIds.isEmpty()) {
             out.errors.add("Step#" + (stepIdx+1) + " selector#" + (selIdx+1) + " (bundle by chapter) không có ứng viên.");
-            return false;
+            return null;
         }
 
         Set<Long> banned = new HashSet<>();
@@ -257,39 +298,43 @@ public class AutoPaperService {
             if (qids.stream().anyMatch(banned::contains)) continue;
             okBundles.add(bid);
         }
-
         if (okBundles.isEmpty()) {
             out.errors.add("Step#" + (stepIdx+1) + " selector#" + (selIdx+1) + " (bundle by chapter) hết do no-repeat.");
-            return false;
+            return null;
         }
 
         Long chosenBid = okBundles.get(ThreadLocalRandom.current().nextInt(okBundles.size()));
         List<Long> qids = bundleItemsCache.get(chosenBid);
         pickedForCell.addAll(qids);
 
-        BigDecimal bundlePts = qids.stream()
-                .map(qid -> metaRepo.findById(qid).map(QuestionMeta::getPoints).orElse(BigDecimal.ZERO))
+        return qids.stream()
+                .map(qid -> metaRepo.findByQuestionId(qid).map(QuestionMeta::getPoints).orElse(BigDecimal.ZERO))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        sumPts = sumPts.add(bundlePts);
-
-        return true;
     }
 
-    private boolean handleBundleByType(Long subjectId, AutoGenSelectorDTO sel,
-                                       int stepIdx, int selIdx,
-                                       Set<Long> usedInPaper, Set<Long> globalUsed,
-                                       List<Long> pickedForCell,
-                                       AutoGenPreviewResponse out, BigDecimal sumPts) {
+    private BigDecimal handleBundleByType(Long subjectId, AutoGenSelectorDTO sel,
+                                          int stepIdx, int selIdx,
+                                          Set<Long> usedInPaper, Set<Long> globalUsed,
+                                          List<Long> pickedForCell,
+                                          AutoGenPreviewResponse out,
+                                          LabelScope labelScope) {
         Integer chapter = (sel.chapterIn != null && !sel.chapterIn.isEmpty()) ? sel.chapterIn.get(0) : null;
         BigDecimal minPts = (sel.pointsEq != null ? sel.pointsEq :
                 (sel.pointsMin != null ? sel.pointsMin : BigDecimal.ZERO));
         BigDecimal maxPts = (sel.pointsEq != null ? sel.pointsEq :
                 (sel.pointsMax != null ? sel.pointsMax : new BigDecimal("9999")));
 
-        List<Long> bundleIds = bundleRepo.findCandidateBundleIds(subjectId, chapter, minPts, maxPts);
+        List<Long> bundleIds;
+        if (labelScope.empty) {
+            bundleIds = bundleRepo.findCandidateBundleIds(subjectId, chapter, minPts, maxPts);
+        } else {
+            bundleIds = bundleRepo.findCandidateBundleIdsByLabels(
+                    subjectId, chapter, minPts, maxPts, labelScope.enums, false
+            );
+        }
         if (bundleIds.isEmpty()) {
             out.errors.add("Step#" + (stepIdx+1) + " selector#" + (selIdx+1) + " (bundle by type) không có ứng viên.");
-            return false;
+            return null;
         }
 
         Set<Long> banned = new HashSet<>();
@@ -301,35 +346,28 @@ public class AutoPaperService {
         Map<Long, List<Long>> bundleItems = new HashMap<>();
 
         for (Long bid : bundleIds) {
-            List<Long> qids = bundleRepo.findQuestionIdsInBundle(bid);
-            bundleItems.put(bid, qids);
-
-            boolean clash = qids.stream().anyMatch(banned::contains);
-            if (clash) continue;
+            List<Long> qids = bundleItems.computeIfAbsent(bid, bundleRepo::findQuestionIdsInBundle);
+            if (qids.stream().anyMatch(banned::contains)) continue;
 
             boolean typeOk = qids.stream().allMatch(qid -> {
-                var om = metaRepo.findById(qid);
+                var om = metaRepo.findByQuestionId(qid);
                 String tc = om.isPresent() ? om.get().getTypeCode() : null;
                 return matchesTypeCode(tc, sel.typeCodeIn);
             });
             if (typeOk) okBundles.add(bid);
         }
-
         if (okBundles.isEmpty()) {
             out.errors.add("Step#" + (stepIdx+1) + " selector#" + (selIdx+1) + " (bundle by type) hết do no-repeat/không khớp typeCode.");
-            return false;
+            return null;
         }
 
         Long chosenBid = okBundles.get(ThreadLocalRandom.current().nextInt(okBundles.size()));
         List<Long> qids = bundleItems.get(chosenBid);
         pickedForCell.addAll(qids);
 
-        BigDecimal bundlePts = qids.stream()
-                .map(qid -> metaRepo.findById(qid).map(QuestionMeta::getPoints).orElse(BigDecimal.ZERO))
+        return qids.stream()
+                .map(qid -> metaRepo.findByQuestionId(qid).map(QuestionMeta::getPoints).orElse(BigDecimal.ZERO))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        sumPts = sumPts.add(bundlePts);
-
-        return true;
     }
 
     // Helper: "2.1" sẽ match "2.1" và "2.1.1"
@@ -342,7 +380,6 @@ public class AutoPaperService {
     }
 
     /* ========= COMMIT ========= */
-
     @Transactional
     public AutoGenPreviewResponse commit(Long subjectId, AutoGenRequest req) {
         AutoGenPreviewResponse resp = preview(subjectId, req);
@@ -369,6 +406,24 @@ public class AutoPaperService {
         return c;
     }
 
+    private static final class LabelScope {
+        final boolean empty;
+        final List<QuestionLabel> enums;
+        LabelScope(boolean empty, List<QuestionLabel> enums) { this.empty = empty; this.enums = enums; }
+    }
+
+    private static LabelScope parseLabels(AutoGenRequest req) {
+        if (req == null || req.labels == null || req.labels.isEmpty())
+            return new LabelScope(true, List.of());
+        List<QuestionLabel> list = req.labels.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(QuestionLabel::valueOf) // "EXAM"/"PRACTICE"
+                .toList();
+        return new LabelScope(list.isEmpty(), list);
+    }
+
     private Specification<QuestionMeta> buildSpec(Long subjectId, AutoGenSelectorDTO sel) {
         List<Specification<QuestionMeta>> specs = new ArrayList<>();
         specs.add(QuestionMetaSpecs.bySubjectId(subjectId));
@@ -384,5 +439,4 @@ public class AutoPaperService {
         specs.add(QuestionMetaSpecs.status(st));
         return Specification.allOf(specs);
     }
-
 }

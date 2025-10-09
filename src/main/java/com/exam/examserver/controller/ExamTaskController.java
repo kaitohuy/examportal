@@ -14,10 +14,13 @@ import com.exam.examserver.service.impl.ExamTaskService;
 import org.springframework.data.domain.*;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.io.IOException;
 import java.time.*;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -233,6 +236,67 @@ public class ExamTaskController {
         deptRepo.findByHeadUser_Id(headId).orElseThrow(() ->
                 new ResponseStatusException(HttpStatus.FORBIDDEN, "Bạn không phải HEAD"));
         service.deleteByHead(headId, id);
+    }
+
+    // TEACHER: bắt đầu (IN_PROGRESS)
+    @PostMapping("/{id}/start")
+    public ExamTaskDTO start(Authentication auth, @PathVariable Long id) {
+        Long me = uid(auth);
+        var t = service.teacherSetInProgress(me, id);
+        return toDTO(t);
+    }
+
+    // TEACHER: nộp bài (multipart/form-data)
+    @PostMapping(path = "/{id}/submit", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ExamTaskDTO submit(
+            Authentication auth,
+            @PathVariable Long id,
+            @RequestPart("file") MultipartFile file,
+            @RequestPart(value = "note", required = false) String note
+    ) throws Exception {
+        Long me = uid(auth);
+        var t = service.teacherSubmit(
+                me, id, file.getOriginalFilename(), file.getContentType(), file.getBytes(), note
+        );
+        return toDTO(t);
+    }
+
+    // TEACHER: báo lỗi
+    @PostMapping("/{id}/report")
+    public ExamTaskDTO report(Authentication auth, @PathVariable Long id, @RequestBody Map<String,String> body) {
+        Long me = uid(auth);
+        var t = service.teacherReport(me, id, body.get("note"));
+        return toDTO(t);
+    }
+
+    // HEAD: duyệt hoàn thành (DONE)
+    @PostMapping("/{id}/approve")
+    public ExamTaskDTO approve(Authentication auth, @PathVariable Long id) {
+        Long headId = uid(auth);
+        var t = service.headApproveDone(headId, id);
+        return toDTO(t);
+    }
+
+    // ExamTaskController
+    @PostMapping("/{id}/return")
+    public ExamTaskDTO returnForRevision(Authentication auth,
+                                         @PathVariable Long id,
+                                         @RequestBody Map<String,String> body) {
+        Long headId = uid(auth);
+        String reason = Optional.ofNullable(body.get("reason")).orElse("");
+        ExamTask t = service.headReturnForRevision(headId, id, reason);
+        return toDTO(t);
+    }
+
+    private ExamTaskDTO toDTO(ExamTask t) {
+        String subjName = subjectRepo.findById(t.getSubjectId())
+                .map(s -> (s.getCode()==null?"":s.getCode()) +
+                        ((s.getCode()!=null && s.getName()!=null)?" - ":"") +
+                        (s.getName()==null?"":s.getName()))
+                .orElse("");
+        String asgName = userRepo.findById(t.getAssignedToId()).map(ExamTaskController::displayName).orElse("");
+        String headName= userRepo.findById(t.getCreatedByHeadId()).map(ExamTaskController::displayName).orElse("");
+        return ExamTaskDTO.of(t, subjName, asgName, headName);
     }
 
 }

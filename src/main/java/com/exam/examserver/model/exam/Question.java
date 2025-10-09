@@ -22,6 +22,9 @@ public class Question {
     @GeneratedValue(strategy = GenerationType.AUTO)
     private Long id;
 
+    @Column(name = "question_code", length = 64, unique = false) // unique theo (subject_id, question_code) ở index
+    private String questionCode;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "subject_id", nullable = false)
     private Subject subject;
@@ -105,6 +108,14 @@ public class Question {
             cascade = CascadeType.REMOVE,
             orphanRemoval = true)
     private List<BundleItem> bundleItems = new ArrayList<>();
+
+    public String getQuestionCode() {
+        return questionCode;
+    }
+
+    public void setQuestionCode(String questionCode) {
+        this.questionCode = questionCode;
+    }
 
     public List<Question> getClones() {
         return clones;

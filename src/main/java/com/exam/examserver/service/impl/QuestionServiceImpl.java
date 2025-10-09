@@ -502,4 +502,17 @@ public class QuestionServiceImpl implements QuestionService {
         }
         return ok;
     }
+    @Override
+    public void updateQuestionCode(Long questionId, String code) {
+        Question q = questionRepo.findById(questionId)
+                .orElseThrow(() -> new EntityNotFoundException("Question not found"));
+        q.setQuestionCode(code);
+        questionRepo.save(q);
+    }
+
+    @Override
+    public boolean codeExists(Long subjectId, String code) {
+        return (code != null && !code.isBlank())
+                && questionRepo.existsBySubjectIdAndQuestionCode(subjectId, code);
+    }
 }

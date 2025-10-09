@@ -5,10 +5,7 @@ import com.exam.examserver.enums.QuestionLabel;
 import com.exam.examserver.model.exam.Question;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import org.springframework.data.jpa.repository.EntityGraph;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
-import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.*;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
@@ -67,4 +64,33 @@ public interface QuestionRepository extends JpaRepository<Question, Long>, JpaSp
     long countByLabelTo(@Param("label") QuestionLabel label,
                         @Param("to")   LocalDateTime to);
 
+    List<Question> findByIdIn(List<Long> ids);
+
+    boolean existsBySubjectIdAndQuestionCode(Long subjectId, String questionCode);
+
+    boolean existsBySubjectIdAndQuestionCodeIgnoreCase(Long subjectId, String questionCode);
+
+    @Modifying
+    @Query("update Question q set q.questionCode=:code where q.id=:id")
+    int updateQuestionCode(@Param("id") Long id, @Param("code") String code);
+
+    @Query("""
+    select q.id
+    from Question q
+      join QuestionMeta qm on qm.questionId = q.id
+    where q.subject.id = :subjectId
+      and qm.status = com.exam.examserver.enums.RecordStatus.APPROVED
+      and (:chapter is null or qm.chapter = :chapter)
+      and (
+        :labelsEmpty = true or
+        exists (
+          select 1 from Question qq join qq.labels lb
+          where qq.id = q.id and lb in :labels
+        )
+      )
+  """)
+    List<Long> findApprovedIdsByScopeAndLabels(@Param("subjectId") Long subjectId,
+                                               @Param("chapter") Integer chapter,
+                                               @Param("labels") Collection<QuestionLabel> labels,
+                                               @Param("labelsEmpty") boolean labelsEmpty);
 }

@@ -13,6 +13,7 @@ import java.util.Set;
 public class QuestionDTO {
     private Long id;
     private QuestionType questionType; // Thêm questionType
+    private String questionCode;
     private String content;
     private Difficulty difficulty;
     private int chapter;
@@ -31,6 +32,14 @@ public class QuestionDTO {
 
     private Long parentId;
     private Integer cloneIndex;
+
+    public String getQuestionCode() {
+        return questionCode;
+    }
+
+    public void setQuestionCode(String questionCode) {
+        this.questionCode = questionCode;
+    }
 
     public Boolean getFlagged() {
         return flagged;
