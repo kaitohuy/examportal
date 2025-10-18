@@ -66,10 +66,29 @@ public class QuestionServiceImpl implements QuestionService {
         this.issueRepo = issueRepo;
     }
 
+//    @Override
+//    public List<QuestionDTO> findByIds(List<Long> questionIds) {
+//        if (questionIds == null || questionIds.isEmpty()) return Collections.emptyList();
+//        List<Question> entities = questionRepo.findByIdIn(questionIds);
+//        Map<Long, Question> map = entities.stream()
+//                .collect(Collectors.toMap(Question::getId, q -> q));
+//        return questionIds.stream().map(map::get)
+//                .filter(Objects::nonNull)
+//                .map(mapper::toDto)
+//                .collect(Collectors.toList());
+//    }
+//
+//    @Override
+//    public QuestionDTO getById(Long questionId) {
+//        Question q = questionRepo.findById(questionId)
+//                .orElseThrow(() -> new EntityNotFoundException("Question not found"));
+//        return mapper.toDto(q);
+//    }
+
     @Override
     public List<QuestionDTO> findByIds(List<Long> questionIds) {
         if (questionIds == null || questionIds.isEmpty()) return Collections.emptyList();
-        List<Question> entities = questionRepo.findByIdIn(questionIds);
+        List<Question> entities = questionRepo.findByIdIn(questionIds); // đã lọc non-deleted ở repo
         Map<Long, Question> map = entities.stream()
                 .collect(Collectors.toMap(Question::getId, q -> q));
         return questionIds.stream().map(map::get)
@@ -82,6 +101,13 @@ public class QuestionServiceImpl implements QuestionService {
     public QuestionDTO getById(Long questionId) {
         Question q = questionRepo.findById(questionId)
                 .orElseThrow(() -> new EntityNotFoundException("Question not found"));
+        // NEW: chặn truy cập bản đã xoá mềm
+        try {
+            var isDeletedField = q.getClass().getDeclaredField("isDeleted"); // phòng trường hợp bạn chưa push model
+            isDeletedField.setAccessible(true);
+            boolean deleted = (boolean) isDeletedField.get(q);
+            if (deleted) throw new EntityNotFoundException("Question not found");
+        } catch (NoSuchFieldException | IllegalAccessException ignore) {}
         return mapper.toDto(q);
     }
 
@@ -262,7 +288,9 @@ public class QuestionServiceImpl implements QuestionService {
 //        Question q = questionRepo.findById(questionId)
 //                .orElseThrow(() -> new EntityNotFoundException("Question not found"));
 //
-//        // Xoá ảnh cover + gallery (không fail toàn bộ nếu 1 ảnh lỗi)
+//        List<Long> affectedBundleIds = bundleItemRepo.findBundleIdsByQuestionId(questionId);
+//        Long subjectId = q.getSubject().getId();
+//
 //        Set<String> urls = new LinkedHashSet<>();
 //        if (q.getImageUrl() != null && !q.getImageUrl().isEmpty()) urls.add(q.getImageUrl());
 //        if (q.getImages() != null) {
@@ -275,6 +303,28 @@ public class QuestionServiceImpl implements QuestionService {
 //        }
 //
 //        questionRepo.delete(q);
+//        fingerprintService.remove(questionId);
+//
+//        if (affectedBundleIds != null && !affectedBundleIds.isEmpty()) {
+//            for (Long bid : affectedBundleIds) {
+//                // nếu bundle trống → xoá cả bundle và FP bundle
+//                if (bundleItemRepo.countByBundleId(bid) == 0) {
+//                    bundleRepo.deleteById(bid);
+//                    fingerprintService.removeBundle(bid);
+//                    continue;
+//                }
+//
+//                // ngược lại: rebuild fingerprint cho bundle
+//                String stem = bundleRepo.findInstructionsById(bid);           // đã thêm query
+//                List<Long> qids = bundleRepo.findQuestionIdsInBundle(bid);
+//                // lấy nội dung các câu để ghép parts
+//                List<Question> qs = questionRepo.findByIdIn(qids);
+//                // parts = content của từng question (hoặc tuỳ logic của bạn)
+//                List<String> parts = qs.stream().map(Question::getContent).toList();
+//
+//                fingerprintService.rebuildBundleFP(bid, subjectId, stem, parts);
+//            }
+//        }
 //    }
 
     @Override
@@ -282,8 +332,80 @@ public class QuestionServiceImpl implements QuestionService {
         Question q = questionRepo.findById(questionId)
                 .orElseThrow(() -> new EntityNotFoundException("Question not found"));
 
-        List<Long> affectedBundleIds = bundleItemRepo.findBundleIdsByQuestionId(questionId);
+        // set cờ thùng rác
+        try {
+            var fDeleted = q.getClass().getDeclaredField("isDeleted");
+            fDeleted.setAccessible(true);
+            fDeleted.set(q, true);
+            // nếu có deletedAt
+            try {
+                var fDeletedAt = q.getClass().getDeclaredField("deletedAt");
+                fDeletedAt.setAccessible(true);
+                fDeletedAt.set(q, LocalDateTime.now());
+            } catch (NoSuchFieldException ignore) {}
+            questionRepo.save(q);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            // fallback: nếu model chưa có field, tạm hard-delete cũ (không khuyến nghị)
+            questionRepo.delete(q);
+            return;
+        }
 
+        // Rebuild FP cho các bundle liên quan (để FP phản ánh việc câu này tạm thời không còn)
+        List<Long> affectedBundleIds = bundleItemRepo.findBundleIdsByQuestionId(questionId);
+        if (affectedBundleIds != null && !affectedBundleIds.isEmpty()) {
+            Long subjectId = q.getSubject().getId();
+            for (Long bid : affectedBundleIds) {
+                String stem = bundleRepo.findInstructionsById(bid);
+                List<Long> rawQids = bundleRepo.findActiveQuestionIdsInBundle (bid);
+                // chỉ lấy các câu chưa bị xoá mềm
+                List<Question> activeQs = questionRepo.findByIdIn(rawQids);
+                List<String> parts = activeQs.stream().map(Question::getContent).toList();
+                fingerprintService.rebuildBundleFP(bid, subjectId, stem, parts);
+            }
+        }
+    }
+
+    @Override
+    public void restore(Long questionId) {
+        Question q = questionRepo.findById(questionId)
+                .orElseThrow(() -> new EntityNotFoundException("Question not found"));
+        try {
+            var fDeleted = q.getClass().getDeclaredField("isDeleted");
+            fDeleted.setAccessible(true);
+            boolean deleted = (boolean) fDeleted.get(q);
+            if (!deleted) return;
+            fDeleted.set(q, false);
+            try {
+                var fDeletedAt = q.getClass().getDeclaredField("deletedAt");
+                fDeletedAt.setAccessible(true);
+                fDeletedAt.set(q, null);
+            } catch (NoSuchFieldException ignore) {}
+            questionRepo.save(q);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new IllegalStateException("Model Question chưa có field isDeleted/deletedAt");
+        }
+
+        // Rebuild FP cho bundle liên quan để đưa câu trở lại footprint
+        List<Long> affectedBundleIds = bundleItemRepo.findBundleIdsByQuestionId(questionId);
+        if (affectedBundleIds != null && !affectedBundleIds.isEmpty()) {
+            Long subjectId = q.getSubject().getId();
+            for (Long bid : affectedBundleIds) {
+                String stem = bundleRepo.findInstructionsById(bid);
+                List<Long> rawQids = bundleRepo.findActiveQuestionIdsInBundle (bid);
+                List<Question> activeQs = questionRepo.findByIdIn(rawQids);
+                List<String> parts = activeQs.stream().map(Question::getContent).toList();
+                fingerprintService.rebuildBundleFP(bid, subjectId, stem, parts);
+            }
+        }
+    }
+
+    // NEW: xoá cứng (dùng cho job dọn thùng rác / admin)
+    @Override
+    public void purge(Long questionId) {
+        Question q = questionRepo.findById(questionId)
+                .orElseThrow(() -> new EntityNotFoundException("Question not found"));
+
+        // xóa ảnh vật lý
         Set<String> urls = new LinkedHashSet<>();
         if (q.getImageUrl() != null && !q.getImageUrl().isEmpty()) urls.add(q.getImageUrl());
         if (q.getImages() != null) {
@@ -295,16 +417,24 @@ public class QuestionServiceImpl implements QuestionService {
             try { imageStorageService.deleteImage(url); } catch (Exception ignored) {}
         }
 
+        // xóa DB
         questionRepo.delete(q);
+        fingerprintService.remove(questionId);
 
+        // Rebuild FP cho bundle liên quan
+        List<Long> affectedBundleIds = bundleItemRepo.findBundleIdsByQuestionId(questionId);
         if (affectedBundleIds != null && !affectedBundleIds.isEmpty()) {
+            Long subjectId = q.getSubject().getId();
             for (Long bid : affectedBundleIds) {
-                if (bundleItemRepo.countByBundleId(bid) == 0) {
-                    bundleRepo.deleteById(bid);
-                }
+                String stem = bundleRepo.findInstructionsById(bid);
+                List<Long> rawQids = bundleRepo.findActiveQuestionIdsInBundle (bid);
+                List<Question> activeQs = questionRepo.findByIdIn(rawQids);
+                List<String> parts = activeQs.stream().map(Question::getContent).toList();
+                fingerprintService.rebuildBundleFP(bid, subjectId, stem, parts);
             }
         }
     }
+
 
     @Override
     public void addImages(Long questionId, List<String> imageUrls) {
@@ -428,6 +558,95 @@ public class QuestionServiceImpl implements QuestionService {
         return page.map(mapper::toDto);
     }
 
+    //OLD METHOD
+//    @Override
+//    public Page<QuestionDTO> pageBySubject(Long subjectId, QuestionFilter f, Pageable pageable) {
+//        subjectRepo.findById(subjectId)
+//                .orElseThrow(() -> new EntityNotFoundException("Subject not found"));
+//
+//        Specification<Question> spec = Specification.allOf(
+//                QuestionSpecs.subjectId(subjectId),
+//                QuestionSpecs.isRootOnly(),
+//                QuestionSpecs.hasAnyLabel(f.getLabels()),
+//                QuestionSpecs.difficulty(f.getDifficulty()),
+//                QuestionSpecs.chapter(f.getChapter()),
+//                QuestionSpecs.type(f.getType()),
+//                QuestionSpecs.createdByContains(f.getCreatedBy()),
+//                QuestionSpecs.createdBetween(f.getFrom(), f.getTo()),
+//                QuestionSpecs.fullText(f.getQ()),
+//                QuestionSpecs.flagged(f.getFlagged())
+//        );
+//
+//        Page<Question> page = questionRepo.findAll(spec, pageable);
+//        Page<QuestionDTO> pageDto = page.map(mapper::toDto);
+//
+//// gắn cờ flagged theo batch
+//        List<Long> ids = pageDto.getContent().stream().map(QuestionDTO::getId).toList();
+//        if (!ids.isEmpty()) {
+//            var openIssues = issueRepo.findByQuestionIdInAndStatus(ids, IssueStatus.OPEN);
+//            var flaggedSet = openIssues.stream().map(ii -> ii.getQuestion().getId()).collect(Collectors.toSet());
+//            pageDto.getContent().forEach(dto -> dto.setFlagged(flaggedSet.contains(dto.getId())));
+//        }
+//
+//        return pageDto;
+//
+//    }
+//
+//    @Override
+//    public List<Long> findIdsByFilter(Long subjectId, QuestionFilter f) {
+//        Specification<Question> spec = Specification.allOf(
+//                QuestionSpecs.subjectId(subjectId),
+//                QuestionSpecs.isRootOnly(),
+//                QuestionSpecs.hasAnyLabel(f.getLabels()),
+//                QuestionSpecs.difficulty(f.getDifficulty()),
+//                QuestionSpecs.chapter(f.getChapter()),
+//                QuestionSpecs.type(f.getType()),
+//                QuestionSpecs.createdByContains(f.getCreatedBy()),
+//                QuestionSpecs.createdBetween(f.getFrom(), f.getTo()),
+//                QuestionSpecs.fullText(f.getQ()),
+//                QuestionSpecs.flagged(f.getFlagged())
+//        );
+//
+//        // KHÔNG truyền sort/pageable để tránh ORDER BY trên DISTINCT (Postgres 42P10)
+//        return questionRepo.findAll(spec).stream()
+//                .map(Question::getId)
+//                .distinct() // phòng trường hợp join labels sinh duplicate
+//                .toList();
+//    }
+//
+////    @Override
+////    @Transactional
+////    public int deleteAllByIds(List<Long> ids) {
+////        if (ids == null || ids.isEmpty()) return 0;
+////        questionRepo.deleteAllByIdInBatch(ids);
+////        return ids.size();
+////    }
+//
+//    @Override
+//    @Transactional
+//    public int deleteAllByIds(List<Long> ids) {
+//        if (ids == null || ids.isEmpty()) return 0;
+//        int ok = 0;
+//        for (Long id : ids) {
+//            delete(id); // dùng hàm delete đã viết ở trên
+//            ok++;
+//        }
+//        return ok;
+//    }
+//    @Override
+//    public void updateQuestionCode(Long questionId, String code) {
+//        Question q = questionRepo.findById(questionId)
+//                .orElseThrow(() -> new EntityNotFoundException("Question not found"));
+//        q.setQuestionCode(code);
+//        questionRepo.save(q);
+//    }
+//
+//    @Override
+//    public boolean codeExists(Long subjectId, String code) {
+//        return (code != null && !code.isBlank())
+//                && questionRepo.existsBySubjectIdAndQuestionCode(subjectId, code);
+//    }
+
     @Override
     public Page<QuestionDTO> pageBySubject(Long subjectId, QuestionFilter f, Pageable pageable) {
         subjectRepo.findById(subjectId)
@@ -436,6 +655,7 @@ public class QuestionServiceImpl implements QuestionService {
         Specification<Question> spec = Specification.allOf(
                 QuestionSpecs.subjectId(subjectId),
                 QuestionSpecs.isRootOnly(),
+                QuestionSpecs.notDeleted(),                      // NEW: lọc thùng rác
                 QuestionSpecs.hasAnyLabel(f.getLabels()),
                 QuestionSpecs.difficulty(f.getDifficulty()),
                 QuestionSpecs.chapter(f.getChapter()),
@@ -449,16 +669,14 @@ public class QuestionServiceImpl implements QuestionService {
         Page<Question> page = questionRepo.findAll(spec, pageable);
         Page<QuestionDTO> pageDto = page.map(mapper::toDto);
 
-// gắn cờ flagged theo batch
+        // gắn cờ flagged theo batch (giữ nguyên)
         List<Long> ids = pageDto.getContent().stream().map(QuestionDTO::getId).toList();
         if (!ids.isEmpty()) {
             var openIssues = issueRepo.findByQuestionIdInAndStatus(ids, IssueStatus.OPEN);
             var flaggedSet = openIssues.stream().map(ii -> ii.getQuestion().getId()).collect(Collectors.toSet());
             pageDto.getContent().forEach(dto -> dto.setFlagged(flaggedSet.contains(dto.getId())));
         }
-
         return pageDto;
-
     }
 
     @Override
@@ -466,6 +684,7 @@ public class QuestionServiceImpl implements QuestionService {
         Specification<Question> spec = Specification.allOf(
                 QuestionSpecs.subjectId(subjectId),
                 QuestionSpecs.isRootOnly(),
+                QuestionSpecs.notDeleted(),                      // NEW: lọc thùng rác
                 QuestionSpecs.hasAnyLabel(f.getLabels()),
                 QuestionSpecs.difficulty(f.getDifficulty()),
                 QuestionSpecs.chapter(f.getChapter()),
@@ -476,32 +695,21 @@ public class QuestionServiceImpl implements QuestionService {
                 QuestionSpecs.flagged(f.getFlagged())
         );
 
-        // KHÔNG truyền sort/pageable để tránh ORDER BY trên DISTINCT (Postgres 42P10)
         return questionRepo.findAll(spec).stream()
                 .map(Question::getId)
-                .distinct() // phòng trường hợp join labels sinh duplicate
+                .distinct()
                 .toList();
     }
-
-//    @Override
-//    @Transactional
-//    public int deleteAllByIds(List<Long> ids) {
-//        if (ids == null || ids.isEmpty()) return 0;
-//        questionRepo.deleteAllByIdInBatch(ids);
-//        return ids.size();
-//    }
 
     @Override
     @Transactional
     public int deleteAllByIds(List<Long> ids) {
         if (ids == null || ids.isEmpty()) return 0;
         int ok = 0;
-        for (Long id : ids) {
-            delete(id); // dùng hàm delete đã viết ở trên
-            ok++;
-        }
+        for (Long id : ids) { delete(id); ok++; }
         return ok;
     }
+
     @Override
     public void updateQuestionCode(Long questionId, String code) {
         Question q = questionRepo.findById(questionId)
@@ -513,6 +721,35 @@ public class QuestionServiceImpl implements QuestionService {
     @Override
     public boolean codeExists(Long subjectId, String code) {
         return (code != null && !code.isBlank())
-                && questionRepo.existsBySubjectIdAndQuestionCode(subjectId, code);
+                // OLD (comment): cho cả bản đã xoá
+                // && questionRepo.existsBySubjectIdAndQuestionCode(subjectId, code);
+                // NEW: chỉ xét bản chưa xoá
+                && ( questionRepo.existsBySubjectIdAndQuestionCodeAndIsDeletedFalse(subjectId, code)
+                || questionRepo.existsBySubjectIdAndQuestionCodeIgnoreCaseAndIsDeletedFalse(subjectId, code) );
+    }
+
+    @Override
+    public Page<QuestionDTO> pageDeletedBySubject(Long subjectId, QuestionFilter f, Pageable pageable) {
+        subjectRepo.findById(subjectId)
+                .orElseThrow(() -> new EntityNotFoundException("Subject not found"));
+
+        Specification<Question> spec = Specification.allOf(
+                QuestionSpecs.subjectId(subjectId),
+                QuestionSpecs.isRootOnly(),
+                QuestionSpecs.deletedOnly(),                 // LƯU Ý: khác pageBySubject()
+                QuestionSpecs.hasAnyLabel(f.getLabels()),
+                QuestionSpecs.difficulty(f.getDifficulty()),
+                QuestionSpecs.chapter(f.getChapter()),
+                QuestionSpecs.type(f.getType()),
+                QuestionSpecs.createdByContains(f.getCreatedBy()),
+                QuestionSpecs.createdBetween(f.getFrom(), f.getTo()),
+                QuestionSpecs.fullText(f.getQ())
+        );
+
+        Page<Question> page = questionRepo.findAll(spec, pageable);
+        Page<QuestionDTO> pageDto = page.map(mapper::toDto);
+
+        // (Không cần gắn cờ flagged trong thùng rác — tuỳ bạn, có thể giữ nếu muốn)
+        return pageDto;
     }
 }

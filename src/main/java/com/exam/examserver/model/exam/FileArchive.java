@@ -59,6 +59,8 @@ public class FileArchive {
 
     private Instant reviewDeadline;
 
+    @Column private Instant releaseAt;
+
     @PrePersist
     public void prePersist() {
         if (createdAt == null) createdAt = Instant.now();
@@ -66,6 +68,16 @@ public class FileArchive {
     }
 
     // ===== getters/setters =====
+
+
+    public Instant getReleaseAt() {
+        return releaseAt;
+    }
+
+    public void setReleaseAt(Instant releaseAt) {
+        this.releaseAt = releaseAt;
+    }
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 

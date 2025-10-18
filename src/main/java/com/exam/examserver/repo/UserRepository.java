@@ -37,10 +37,16 @@ public interface UserRepository extends JpaRepository<User, Long> {
     long countByDepartment_Id(Long deptId);
 
     @Query("""
-       select count(distinct u) from User u
-       join u.userRoles ur
-       join ur.role r
-       where r.roleName = :role and u.department.id = :deptId
-       """)
-    long countByRoleAndDepartment(@Param("role") RoleType role, @Param("deptId") Long deptId);
+      select count(distinct u.id)
+      from User u
+      join u.userRoles ur
+      join ur.role r
+      join u.teacherSubjects ts
+      join ts.subject s
+      where r.roleName = :role
+        and s.department.id = :deptId
+    """)
+    long countByRoleAndDepartment(@Param("role") RoleType role,
+                                  @Param("deptId") Long deptId);
+
 }

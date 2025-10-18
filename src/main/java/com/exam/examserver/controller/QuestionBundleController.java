@@ -19,6 +19,9 @@ import org.springframework.web.bind.annotation.*;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/subject/{subjectId}/bundles")
@@ -79,30 +82,82 @@ public class QuestionBundleController {
                                     @PathVariable Long bundleId,
                                     @RequestBody BundleUpsertDTO dto) {
         QuestionBundle b = bundleRepo.findById(bundleId).orElseThrow();
+
+        // update bundle fields
         b.setTitle(dto.getTitle());
         b.setInstructions(dto.getInstructions());
         b.setTotalPoints(dto.getTotalPoints());
-        b.setStatus(dto.getStatus() == null ? b.getStatus() : dto.getStatus());
-        // replace items:
-        List<BundleItem> old = itemRepo.findByBundleIdOrderByOrderIndexAsc(bundleId);
-        itemRepo.deleteAll(old);
-        if (dto.getItems() != null) {
-            for (BundleUpsertItemDTO it : dto.getItems()) {
-                BundleItem bi = new BundleItem();
-                bi.setBundle(b);
-                bi.setQuestion(new com.exam.examserver.model.exam.Question()); // ref by id
-                bi.getQuestion().setId(it.getQuestionId());
-                bi.setOrderIndex(it.getOrderIndex());
-                bi.setPointsOverride(it.getPointsOverride());
-                bi.setNote(it.getNote());
-                itemRepo.save(bi);
+        if (dto.getStatus() != null) b.setStatus(dto.getStatus());
+
+        // Lấy danh sách item đang "active"
+        List<BundleItem> active = itemRepo.findActiveByBundleIdOrderByOrderIndexAsc(bundleId);
+
+        // Map theo questionId để tiện so khớp
+        Map<Long, BundleItem> byQid = active.stream()
+                .filter(it -> it.getQuestion() != null && it.getQuestion().getId() != null)
+                .collect(Collectors.toMap(it -> it.getQuestion().getId(), it -> it));
+
+        // Tập qid mới từ DTO
+        List<BundleUpsertItemDTO> in = (dto.getItems() == null) ? List.of() : dto.getItems();
+        var incomingQids = in.stream().map(BundleUpsertItemDTO::getQuestionId).filter(Objects::nonNull).collect(Collectors.toSet());
+
+        // 1) Soft-delete các item không còn trong DTO
+        for (BundleItem it : active) {
+            Long qid = it.getQuestion() == null ? null : it.getQuestion().getId();
+            if (qid == null || !incomingQids.contains(qid)) {
+                it.setIsDeleted(true);
+                // có thể reset orderIndex nếu muốn: it.setOrderIndex(null);
+                itemRepo.save(it);
             }
         }
-        return mapper.toDto(bundleRepo.save(b));
+
+        // 2) Upsert các item có trong DTO (update nếu tồn tại, tạo mới nếu chưa có)
+        for (BundleUpsertItemDTO it : in) {
+            BundleItem exist = byQid.get(it.getQuestionId());
+            if (exist != null) {
+                // revive nếu lỡ bị xóa mềm
+                exist.setIsDeleted(false);
+                exist.setOrderIndex(it.getOrderIndex());
+                exist.setPointsOverride(it.getPointsOverride());
+                exist.setNote(it.getNote());
+                itemRepo.save(exist);
+            } else {
+                BundleItem ni = new BundleItem();
+                ni.setBundle(b);
+                var qRef = new com.exam.examserver.model.exam.Question(); // ref by id
+                qRef.setId(it.getQuestionId());
+                ni.setQuestion(qRef);
+                ni.setOrderIndex(it.getOrderIndex());
+                ni.setPointsOverride(it.getPointsOverride());
+                ni.setNote(it.getNote());
+                ni.setIsDeleted(false);
+                itemRepo.save(ni);
+            }
+        }
+
+        // Lưu bundle
+        QuestionBundle saved = bundleRepo.save(b);
+        return mapper.toDto(saved);
     }
 
     @DeleteMapping("/{bundleId}")
     public void delete(@PathVariable Long subjectId, @PathVariable Long bundleId) {
         bundleRepo.deleteById(bundleId);
+    }
+
+    @GetMapping("/lookup")
+    public List<QuestionBundleDTO> lookupBundles(@PathVariable Long subjectId,
+                                                 @RequestParam List<Long> ids) {
+        if (ids == null || ids.isEmpty()) return List.of();
+        // giữ thứ tự theo ids
+        Map<Long, QuestionBundle> map = bundleRepo.findAllById(ids).stream()
+                .filter(b -> b.getSubject() != null && Objects.equals(b.getSubject().getId(), subjectId))
+                .collect(Collectors.toMap(QuestionBundle::getId, b -> b));
+        List<QuestionBundleDTO> out = new ArrayList<>(ids.size());
+        for (Long id : ids) {
+            QuestionBundle b = map.get(id);
+            if (b != null) out.add(mapper.toDto(b));
+        }
+        return out;
     }
 }

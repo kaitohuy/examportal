@@ -22,7 +22,7 @@ public class Question {
     @GeneratedValue(strategy = GenerationType.AUTO)
     private Long id;
 
-    @Column(name = "question_code", length = 64, unique = false) // unique theo (subject_id, question_code) ở index
+    @Column(name = "question_code", length = 64, unique = false)
     private String questionCode;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -38,7 +38,7 @@ public class Question {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private QuestionType questionType; // enum MULTIPLE_CHOICE, ESSAY
+    private QuestionType questionType;
 
     @Column(length = 10000, nullable = false)
     private String content;
@@ -53,33 +53,28 @@ public class Question {
     @Column(nullable = true)
     private String optionD;
     @Column(nullable = true)
-    private String answer; // A, B, C, D cho trắc nghiệm
+    private String answer;
 
-    // Các trường cho câu tự luận
     @Column(length = 10000, nullable = true)
-    private String answerText; // Đáp án dạng văn bản cho tự luận
+    private String answerText;
 
     // Các trường cho câu hỏi có hình ảnh
     @Column(nullable = true)
-    private String imageUrl; // URL hoặc path tới hình ảnh
+    private String imageUrl;
 
-    // Question.java  (bổ sung các field/quan hệ dưới)
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "parent_id")
-    private Question parent;                 // null nếu là bản gốc
-
+    private Question parent;
     @Column(name = "clone_index")
-    private Integer cloneIndex;              // 1,2,3,... (chỉ dùng cho clone)
+    private Integer cloneIndex;
 
-    // ĐỂ LAZY + batch để giảm N+1 khi cần load nhiều câu
     @ElementCollection(targetClass = QuestionLabel.class, fetch = FetchType.LAZY)
     @CollectionTable(name = "question_labels", joinColumns = @JoinColumn(name = "question_id"))
     @Enumerated(EnumType.STRING)
     @Column(name = "label", nullable = false)
-    @BatchSize(size = 64) // Hibernate hint
+    @BatchSize(size = 64)
     private Set<QuestionLabel> labels = new HashSet<>();
 
-    // Với ảnh cũng nên batch để giảm N+1 khi mapper chạm images
     @OneToMany(mappedBy = "question", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @OrderBy("orderIndex ASC")
     @BatchSize(size = 64)
@@ -104,10 +99,68 @@ public class Question {
             fetch = FetchType.LAZY)
     private QuestionMeta meta;
 
+//    @OneToMany(mappedBy = "question",
+//            cascade = CascadeType.REMOVE,
+//            orphanRemoval = true)
+//    private List<BundleItem> bundleItems = new ArrayList<>();
+
+    // === SOFT-DELETE FIELDS === newwwwwwwwww
+    @Column(name = "is_deleted", nullable = false)
+    private boolean isDeleted = false;
+
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "deleted_by")
+    private User deletedBy;
+
     @OneToMany(mappedBy = "question",
-            cascade = CascadeType.REMOVE,
-            orphanRemoval = true)
+            /* bỏ CascadeType.REMOVE & orphanRemoval để tránh xoá cứng liên kết */
+            fetch = FetchType.LAZY)
+    @OrderBy("orderIndex ASC")
+    @BatchSize(size = 64)
     private List<BundleItem> bundleItems = new ArrayList<>();
+
+    public QuestionMeta getMeta() {
+        return meta;
+    }
+
+    public void setMeta(QuestionMeta meta) {
+        this.meta = meta;
+    }
+
+    public boolean isDeleted() {
+        return isDeleted;
+    }
+
+    public void setDeleted(boolean deleted) {
+        isDeleted = deleted;
+    }
+
+    public LocalDateTime getDeletedAt() {
+        return deletedAt;
+    }
+
+    public void setDeletedAt(LocalDateTime deletedAt) {
+        this.deletedAt = deletedAt;
+    }
+
+    public User getDeletedBy() {
+        return deletedBy;
+    }
+
+    public void setDeletedBy(User deletedBy) {
+        this.deletedBy = deletedBy;
+    }
+
+    public List<BundleItem> getBundleItems() {
+        return bundleItems;
+    }
+
+    public void setBundleItems(List<BundleItem> bundleItems) {
+        this.bundleItems = bundleItems;
+    }
 
     public String getQuestionCode() {
         return questionCode;

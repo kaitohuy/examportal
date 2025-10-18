@@ -12,6 +12,7 @@ import java.util.Set;
 // Dùng để hiển thị câu hỏi
 public class QuestionDTO {
     private Long id;
+    private Long subjectId;
     private QuestionType questionType; // Thêm questionType
     private String questionCode;
     private String content;
@@ -32,6 +33,14 @@ public class QuestionDTO {
 
     private Long parentId;
     private Integer cloneIndex;
+
+    public Long getSubjectId() {
+        return subjectId;
+    }
+
+    public void setSubjectId(Long subjectId) {
+        this.subjectId = subjectId;
+    }
 
     public String getQuestionCode() {
         return questionCode;

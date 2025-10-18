@@ -53,4 +53,10 @@ public class GcsObjectHelper {
     public Blob stat(String key) {
         return storage.get(BlobId.of(bucket, key));
     }
+
+    public byte[] readBytes(String key) {
+        Blob b = storage.get(BlobId.of(bucket, key));
+        if (b == null) return null;
+        return b.getContent();
+    }
 }

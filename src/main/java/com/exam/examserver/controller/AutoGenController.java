@@ -8,6 +8,7 @@ import com.exam.examserver.service.SubjectService;
 import com.exam.examserver.service.auto.AutoPaperService;
 import com.exam.examserver.service.import_export.ExportQuestionService;
 import com.exam.examserver.service.import_export.FileArchiveService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.*;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -26,16 +27,15 @@ public class AutoGenController {
     private final AutoPaperService autoService;
     private final ExportQuestionService exportService;
     private final SubjectService subjectService;
-    private final FileArchiveService fileArchiveService;
+    private final ObjectMapper om = new ObjectMapper();
 
     public AutoGenController(AutoPaperService autoService,
                              ExportQuestionService exportService,
-                             SubjectService subjectService,
-                             FileArchiveService fileArchiveService) {
+                             SubjectService subjectService
+                             ) {
         this.autoService = autoService;
         this.exportService = exportService;
         this.subjectService = subjectService;
-        this.fileArchiveService = fileArchiveService;
     }
 
     // Xem ma trận pick (không ghi DB)
@@ -121,6 +121,13 @@ public class AutoGenController {
             zos.putNextEntry(e);
             zos.write(matrix);
             zos.closeEntry();
+
+            // 3c) blueprint.json — để build đáp án khi approve submission
+            String bpJson = buildBlueprintJson(resp);
+            ZipEntry eBp = new ZipEntry("blueprint.json");
+            zos.putNextEntry(eBp);
+            zos.write(bpJson.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            zos.closeEntry();
         }
 
         byte[] zipBytes = baos.toByteArray();
@@ -152,5 +159,28 @@ public class AutoGenController {
         headers.setContentType(MediaType.parseMediaType("application/zip"));
         headers.setContentLength(zipBytes.length);
         return new ResponseEntity<>(zipBytes, headers, HttpStatus.OK);
+    }
+
+    private String buildBlueprintJson(AutoGenPreviewResponse resp) throws Exception {
+        Map<String, Object> root = new java.util.LinkedHashMap<>();
+        int N = Math.max(0, resp.variants);
+        int R = (resp.rows == null ? 0 : resp.rows.size());
+
+        root.put("variants", N);
+        java.util.List<Map<String,Object>> rows = new java.util.ArrayList<>();
+        for (int r = 0; r < R; r++) {
+            var row = resp.rows.get(r);
+            java.util.List<java.util.List<Long>> cells = new java.util.ArrayList<>(N);
+            for (int k = 0; k < N; k++) {
+                var cell = row.columns.get(k);
+                java.util.List<Long> ids = (cell == null || cell.questionIds == null) ? java.util.List.of() : cell.questionIds;
+                cells.add(ids);
+            }
+            java.util.Map<String,Object> rowObj = new java.util.LinkedHashMap<>();
+            rowObj.put("cells", cells);
+            rows.add(rowObj);
+        }
+        root.put("rows", rows);
+        return om.writeValueAsString(root);
     }
 }

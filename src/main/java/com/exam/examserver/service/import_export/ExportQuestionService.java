@@ -64,8 +64,8 @@ public class ExportQuestionService {
 
     public static record ExamHeader(
             String institute,   // ví dụ: "HỌC VIỆN CÔNG NGHỆ BƯU CHÍNH VIỄN THÔNG"
-            String faculty,     // KHOA: (vd "Công nghệ thông tin")
-            String program,     // BỘ MÔN / Chuyên ngành (vd "Khoa học máy tính")
+            String program,     // KHOA: (vd "Công nghệ thông tin")
+            String faculty,     // BỘ MÔN / Chuyên ngành (vd "Khoa học máy tính")
             String subjectName,
             String subjectCode,
             String semester,    // "I", "II", "Hè", ...
@@ -143,7 +143,7 @@ public class ExportQuestionService {
                             ? q.getAnswer() : q.getAnswerText();
                     if (hasText(ans)) {
                         Paragraph p = buildLineParagraph(PT_LEADING);
-                        addInlineTeXLitePng(p, "Answer: " + prettyMathSpaces(safeText(ans)), PT_EQ_SIZE);
+                        addInlineTeXLitePng(p, "Đáp án: " + prettyMathSpaces(safeText(ans)), PT_EQ_SIZE);
                         doc.add(p);
                     }
                 }
@@ -442,7 +442,7 @@ public class ExportQuestionService {
                 // Đáp án (nếu chọn)
                 if (includeAnswers) {
                     String ans = (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE) ? q.getAnswer() : q.getAnswerText();
-                    if (hasText(ans)) writeContentSmart(doc, "Answer: " + prettyMathSpaces(safeText(ans)));
+                    if (hasText(ans)) writeContentSmart(doc, "Đáp án: " + prettyMathSpaces(safeText(ans)));
                 }
 
                 doc.createParagraph(); // spacer
@@ -506,10 +506,10 @@ public class ExportQuestionService {
 
                 if (includeAnswers) {
                     String ans = (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE) ? q.getAnswer() : q.getAnswerText();
-                    if (hasText(ans)) writeContentSmart(doc, "Answer: " + prettyMathSpaces(safeText(ans)));
+                    if (hasText(ans)) writeContentSmart(doc, "Đáp án: " + prettyMathSpaces(safeText(ans)));
                 }
 
-                doc.createParagraph(); // 1 dòng trống giữa các câu
+                doc.createParagraph();
             }
 
             // ===== Footer đề thi =====
@@ -583,14 +583,13 @@ public class ExportQuestionService {
         pbm.setAlignment(ParagraphAlignment.CENTER);
         setParaSpacing(pbm, 6, 6, 1.08);
         addRun(pbm, "KHOA: ", false, 11, true);
-        addRun(pbm, h.faculty(), false, 11, true);
+        addRun(pbm, h.program(), false, 11, true);
 
         XWPFParagraph pk = left.addParagraph();
         pk.setAlignment(ParagraphAlignment.CENTER);
         setParaSpacing(pk, 6, 6, 1.08);
         addRun(pk, "BỘ MÔN: ", true, 11, true);
-        addRun(pk, h.program(), false, 11, true);
-        System.out.println("export header: " + h.program());
+        addRun(pk, h.faculty(), false, 11, true);
 
         // ==== CỘT PHẢI: 2 dòng trống, Title + (Hình thức thi viết) ====
         for (int i = 0; i < 2; i++) {
@@ -1207,4 +1206,73 @@ public class ExportQuestionService {
         sanitizeAllRuns(doc);
     }
 
+    public byte[] exportExamFromBlueprintWithAnswers(
+            List<List<Long>> rowsIds,
+            ExamHeader header
+    ) throws IOException {
+
+        List<Long> allIds = rowsIds.stream().flatMap(List::stream).toList();
+        Map<Long, QuestionDTO> qById = questionService.findByIds(allIds)
+                .stream().collect(Collectors.toMap(QuestionDTO::getId, q -> q));
+        Map<Long, String> stemMap = bundleService.findInstructionsByQuestionIds(allIds);
+
+        try (XWPFDocument doc = new XWPFDocument();
+             ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+
+            // Header đề thi
+            writeExamHeader(doc, header);
+
+            for (int i = 0; i < rowsIds.size(); i++) {
+                List<Long> subIds = rowsIds.get(i);
+                if (subIds == null || subIds.isEmpty()) continue;
+
+                // Giữ tiêu đề câu như bản gốc
+                BigDecimal totalPts = sumPointsOfQuestions(subIds);
+                String ptsText = (totalPts != null && totalPts.compareTo(BigDecimal.ZERO) > 0)
+                        ? " (" + fmtPoints(totalPts) + " điểm)" : "";
+                writeQuestionTitle(doc, "Câu " + (i + 1) + ptsText);
+
+                char mark = 'a';
+                for (int j = 0; j < subIds.size(); j++) {
+                    Long qid = subIds.get(j);
+                    QuestionDTO q = qById.get(qid);
+                    if (q == null) continue;
+
+                    String content = prettyMathSpaces(safeText(q.getContent()));
+                    String prefix = (subIds.size() > 1) ? (String.valueOf(mark) + ") ") : "";
+                    writeContentSmart(doc, prefix + content);
+                    if (subIds.size() > 1) mark++;
+
+                    if (q.getImages() != null && !q.getImages().isEmpty()) {
+                        for (var imgDto : q.getImages()) addWordImage(doc, imgDto.getUrl());
+                    } else if (q.getImageUrl() != null) {
+                        addWordImage(doc, q.getImageUrl());
+                    }
+
+                    if (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE) {
+                        writeOptionIfPresent(doc, "   a) ", q.getOptionA());
+                        writeOptionIfPresent(doc, "   b) ", q.getOptionB());
+                        writeOptionIfPresent(doc, "   c) ", q.getOptionC());
+                        writeOptionIfPresent(doc, "   d) ", q.getOptionD());
+                    }
+
+                    // === CHÈN ĐÁP ÁN ===
+                    String ans = (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE)
+                            ? q.getAnswer()
+                            : q.getAnswerText();
+                    if (hasText(ans)) {
+                        writeContentSmart(doc, "Đáp án: " + prettyMathSpaces(safeText(ans)));
+                    }
+                }
+
+                doc.createParagraph(); // spacer giữa các câu
+            }
+
+            // Footer (giữ nguyên)
+            writeExamFooter(doc);
+            finalizeDocx(doc);
+            doc.write(baos);
+            return baos.toByteArray();
+        }
+    }
 }

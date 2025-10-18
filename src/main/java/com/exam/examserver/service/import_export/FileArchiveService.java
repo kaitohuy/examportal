@@ -10,6 +10,7 @@ import com.exam.examserver.service.impl.NotificationService;
 import com.exam.examserver.storage.FileArchiveStorage;
 import com.exam.examserver.storage.GcsObjectHelper;
 import com.exam.examserver.storage.GcsSignedUrl;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.transaction.Transactional;
 import org.apache.commons.codec.digest.DigestUtils;
@@ -69,12 +70,15 @@ public class FileArchiveService {
 
         if ("EXPORT".equalsIgnoreCase(kind) && meta != null) {
             String v = String.valueOf(meta.getOrDefault("variant", "")).toUpperCase();
-            if ("EXAM".equals(v))      fa.setVariant(ArchiveVariant.EXAM);
-            else if ("PRACTICE".equals(v)) fa.setVariant(ArchiveVariant.PRACTICE);
+            if ("EXAM".equals(v))           fa.setVariant(ArchiveVariant.EXAM);
+            else if ("PRACTICE".equals(v))  fa.setVariant(ArchiveVariant.PRACTICE);
+            else if ("ANSWER".equals(v))    fa.setVariant(ArchiveVariant.ANSWER);   // <-- NEW
 
             String fmt = String.valueOf(meta.getOrDefault("format","")).toUpperCase();
-            if ("PDF".equals(fmt) || "DOCX".equals(fmt) || "WORD".equals(fmt)) {
-                fa.setExportFormat("WORD".equals(fmt) ? "DOCX" : fmt);
+            // Hỗ trợ ZIP/ZIP_DOCX ngoài PDF/DOCX/WORD
+            if ("WORD".equals(fmt)) fmt = "DOCX";
+            if ("PDF".equals(fmt) || "DOCX".equals(fmt) || "ZIP".equals(fmt) || "ZIP_DOCX".equals(fmt)) {
+                fa.setExportFormat(fmt);
             }
         }
         return fileRepo.save(fa);
@@ -107,12 +111,14 @@ public class FileArchiveService {
 
         if (meta != null) {
             String v = String.valueOf(meta.getOrDefault("variant", "")).toUpperCase();
-            if ("EXAM".equals(v))      fa.setVariant(ArchiveVariant.EXAM);
-            else if ("PRACTICE".equals(v)) fa.setVariant(ArchiveVariant.PRACTICE);
+            if ("EXAM".equals(v))           fa.setVariant(ArchiveVariant.EXAM);
+            else if ("PRACTICE".equals(v))  fa.setVariant(ArchiveVariant.PRACTICE);
+            else if ("ANSWER".equals(v))    fa.setVariant(ArchiveVariant.ANSWER);   // <-- NEW
 
             String fmt = String.valueOf(meta.getOrDefault("format","")).toUpperCase();
-            if ("PDF".equals(fmt) || "DOCX".equals(fmt) || "WORD".equals(fmt)) {
-                fa.setExportFormat("WORD".equals(fmt) ? "DOCX" : fmt);
+            if ("WORD".equals(fmt)) fmt = "DOCX";
+            if ("PDF".equals(fmt) || "DOCX".equals(fmt) || "ZIP".equals(fmt) || "ZIP_DOCX".equals(fmt)) {
+                fa.setExportFormat(fmt);
             }
         }
 
@@ -162,6 +168,18 @@ public class FileArchiveService {
 
         if ("EXPORT".equalsIgnoreCase(kind) && fa.getReviewStatus() == null) {
             fa.setReviewStatus(storageKey.startsWith("tmp/") ? ReviewStatus.PENDING : ReviewStatus.APPROVED);
+        }
+        if ("EXPORT".equalsIgnoreCase(kind) && meta != null) {                 // <-- thêm block giống (A)
+            String v = String.valueOf(meta.getOrDefault("variant", "")).toUpperCase();
+            if ("EXAM".equals(v))           fa.setVariant(ArchiveVariant.EXAM);
+            else if ("PRACTICE".equals(v))  fa.setVariant(ArchiveVariant.PRACTICE);
+            else if ("ANSWER".equals(v))    fa.setVariant(ArchiveVariant.ANSWER);
+
+            String fmt = String.valueOf(meta.getOrDefault("format","")).toUpperCase();
+            if ("WORD".equals(fmt)) fmt = "DOCX";
+            if ("PDF".equals(fmt) || "DOCX".equals(fmt) || "ZIP".equals(fmt) || "ZIP_DOCX".equals(fmt)) {
+                fa.setExportFormat(fmt);
+            }
         }
         fileRepo.save(fa);
     }
@@ -299,12 +317,14 @@ public class FileArchiveService {
         // optional: set variant/format nếu cần (giống savePendingExport)
         if (meta != null) {
             String v = String.valueOf(meta.getOrDefault("variant", "")).toUpperCase();
-            if ("EXAM".equals(v))      fa.setVariant(ArchiveVariant.EXAM);
-            else if ("PRACTICE".equals(v)) fa.setVariant(ArchiveVariant.PRACTICE);
+            if ("EXAM".equals(v))           fa.setVariant(ArchiveVariant.EXAM);
+            else if ("PRACTICE".equals(v))  fa.setVariant(ArchiveVariant.PRACTICE);
+            else if ("ANSWER".equals(v))    fa.setVariant(ArchiveVariant.ANSWER);   // <-- NEW
 
             String fmt = String.valueOf(meta.getOrDefault("format","")).toUpperCase();
-            if ("PDF".equals(fmt) || "DOCX".equals(fmt) || "WORD".equals(fmt)) {
-                fa.setExportFormat("WORD".equals(fmt) ? "DOCX" : fmt);
+            if ("WORD".equals(fmt)) fmt = "DOCX";
+            if ("PDF".equals(fmt) || "DOCX".equals(fmt) || "ZIP".equals(fmt) || "ZIP_DOCX".equals(fmt)) {
+                fa.setExportFormat(fmt);
             }
         }
 
@@ -353,5 +373,26 @@ public class FileArchiveService {
         }
         // tạo pending mới
         return savePendingSubmission(subjectId, userId, filename, mimeType, data, meta);
+    }
+
+    @Transactional
+    public FileArchive updateReleaseAt(Long fileId, Instant releaseAt) {
+        FileArchive fa = fileRepo.findById(fileId).orElseThrow();
+        // chỉ áp dụng cho ANSWER
+        if (fa.getVariant() == null || fa.getVariant() != ArchiveVariant.ANSWER) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Chỉ đặt releaseAt cho file ANSWER.");
+        }
+        try {
+            Map<String,Object> meta = (fa.getMetaJson()==null || fa.getMetaJson().isBlank())
+                    ? new java.util.LinkedHashMap<>()
+                    : om.readValue(fa.getMetaJson(), new TypeReference<Map<String,Object>>() {});
+            if (releaseAt == null) meta.put("releaseAt", null);
+            else meta.put("releaseAt", releaseAt.toString()); // ISO-8601 UTC
+
+            fa.setMetaJson(om.writeValueAsString(meta));
+            return fileRepo.save(fa);
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Lỗi cập nhật metaJson", e);
+        }
     }
 }

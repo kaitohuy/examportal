@@ -259,6 +259,119 @@ public class AutoPaperService {
         return chosen.getPoints() == null ? BigDecimal.ZERO : chosen.getPoints();
     }
 
+    // OLD METHOD
+//    private BigDecimal handleBundleByChapter(Long subjectId, AutoGenSelectorDTO sel,
+//                                             int stepIdx, int selIdx,
+//                                             Set<Long> usedInPaper, Set<Long> globalUsed,
+//                                             List<Long> pickedForCell,
+//                                             AutoGenPreviewResponse out,
+//                                             LabelScope labelScope) {
+//        Integer chapter = (sel.chapterIn != null && !sel.chapterIn.isEmpty()) ? sel.chapterIn.get(0) : null;
+//        BigDecimal minPts = (sel.pointsEq != null ? sel.pointsEq :
+//                (sel.pointsMin != null ? sel.pointsMin : BigDecimal.ZERO));
+//        BigDecimal maxPts = (sel.pointsEq != null ? sel.pointsEq :
+//                (sel.pointsMax != null ? sel.pointsMax : new BigDecimal("9999")));
+//
+//        List<Long> bundleIds;
+//        if (labelScope.empty) {
+//            bundleIds = bundleRepo.findCandidateBundleIds(subjectId, chapter, minPts, maxPts);
+//        } else {
+//            bundleIds = bundleRepo.findCandidateBundleIdsByLabels(
+//                    subjectId, chapter, minPts, maxPts, labelScope.enums, false
+//            );
+//        }
+//        if (bundleIds.isEmpty()) {
+//            out.errors.add("Step#" + (stepIdx+1) + " selector#" + (selIdx+1) + " (bundle by chapter) không có ứng viên.");
+//            return null;
+//        }
+//
+//        Set<Long> banned = new HashSet<>();
+//        banned.addAll(usedInPaper);
+//        banned.addAll(globalUsed);
+//        banned.addAll(pickedForCell);
+//
+//        List<Long> okBundles = new ArrayList<>();
+//        Map<Long, List<Long>> bundleItemsCache = new HashMap<>();
+//
+//        for (Long bid : bundleIds) {
+//            List<Long> qids = bundleRepo.findQuestionIdsInBundle(bid);
+//            bundleItemsCache.put(bid, qids);
+//            if (qids.stream().anyMatch(banned::contains)) continue;
+//            okBundles.add(bid);
+//        }
+//        if (okBundles.isEmpty()) {
+//            out.errors.add("Step#" + (stepIdx+1) + " selector#" + (selIdx+1) + " (bundle by chapter) hết do no-repeat.");
+//            return null;
+//        }
+//
+//        Long chosenBid = okBundles.get(ThreadLocalRandom.current().nextInt(okBundles.size()));
+//        List<Long> qids = bundleItemsCache.get(chosenBid);
+//        pickedForCell.addAll(qids);
+//
+//        return qids.stream()
+//                .map(qid -> metaRepo.findByQuestionId(qid).map(QuestionMeta::getPoints).orElse(BigDecimal.ZERO))
+//                .reduce(BigDecimal.ZERO, BigDecimal::add);
+//    }
+
+    // OLD METHOD
+//    private BigDecimal handleBundleByType(Long subjectId, AutoGenSelectorDTO sel,
+//                                          int stepIdx, int selIdx,
+//                                          Set<Long> usedInPaper, Set<Long> globalUsed,
+//                                          List<Long> pickedForCell,
+//                                          AutoGenPreviewResponse out,
+//                                          LabelScope labelScope) {
+//        Integer chapter = (sel.chapterIn != null && !sel.chapterIn.isEmpty()) ? sel.chapterIn.get(0) : null;
+//        BigDecimal minPts = (sel.pointsEq != null ? sel.pointsEq :
+//                (sel.pointsMin != null ? sel.pointsMin : BigDecimal.ZERO));
+//        BigDecimal maxPts = (sel.pointsEq != null ? sel.pointsEq :
+//                (sel.pointsMax != null ? sel.pointsMax : new BigDecimal("9999")));
+//
+//        List<Long> bundleIds;
+//        if (labelScope.empty) {
+//            bundleIds = bundleRepo.findCandidateBundleIds(subjectId, chapter, minPts, maxPts);
+//        } else {
+//            bundleIds = bundleRepo.findCandidateBundleIdsByLabels(
+//                    subjectId, chapter, minPts, maxPts, labelScope.enums, false
+//            );
+//        }
+//        if (bundleIds.isEmpty()) {
+//            out.errors.add("Step#" + (stepIdx+1) + " selector#" + (selIdx+1) + " (bundle by type) không có ứng viên.");
+//            return null;
+//        }
+//
+//        Set<Long> banned = new HashSet<>();
+//        banned.addAll(usedInPaper);
+//        banned.addAll(globalUsed);
+//        banned.addAll(pickedForCell);
+//
+//        List<Long> okBundles = new ArrayList<>();
+//        Map<Long, List<Long>> bundleItems = new HashMap<>();
+//
+//        for (Long bid : bundleIds) {
+//            List<Long> qids = bundleItems.computeIfAbsent(bid, bundleRepo::findQuestionIdsInBundle);
+//            if (qids.stream().anyMatch(banned::contains)) continue;
+//
+//            boolean typeOk = qids.stream().allMatch(qid -> {
+//                var om = metaRepo.findByQuestionId(qid);
+//                String tc = om.isPresent() ? om.get().getTypeCode() : null;
+//                return matchesTypeCode(tc, sel.typeCodeIn);
+//            });
+//            if (typeOk) okBundles.add(bid);
+//        }
+//        if (okBundles.isEmpty()) {
+//            out.errors.add("Step#" + (stepIdx+1) + " selector#" + (selIdx+1) + " (bundle by type) hết do no-repeat/không khớp typeCode.");
+//            return null;
+//        }
+//
+//        Long chosenBid = okBundles.get(ThreadLocalRandom.current().nextInt(okBundles.size()));
+//        List<Long> qids = bundleItems.get(chosenBid);
+//        pickedForCell.addAll(qids);
+//
+//        return qids.stream()
+//                .map(qid -> metaRepo.findByQuestionId(qid).map(QuestionMeta::getPoints).orElse(BigDecimal.ZERO))
+//                .reduce(BigDecimal.ZERO, BigDecimal::add);
+//    }
+
     private BigDecimal handleBundleByChapter(Long subjectId, AutoGenSelectorDTO sel,
                                              int stepIdx, int selIdx,
                                              Set<Long> usedInPaper, Set<Long> globalUsed,
@@ -271,14 +384,10 @@ public class AutoPaperService {
         BigDecimal maxPts = (sel.pointsEq != null ? sel.pointsEq :
                 (sel.pointsMax != null ? sel.pointsMax : new BigDecimal("9999")));
 
-        List<Long> bundleIds;
-        if (labelScope.empty) {
-            bundleIds = bundleRepo.findCandidateBundleIds(subjectId, chapter, minPts, maxPts);
-        } else {
-            bundleIds = bundleRepo.findCandidateBundleIdsByLabels(
-                    subjectId, chapter, minPts, maxPts, labelScope.enums, false
-            );
-        }
+        List<Long> bundleIds = labelScope.empty
+                ? bundleRepo.findCandidateBundleIds(subjectId, chapter, minPts, maxPts)
+                : bundleRepo.findCandidateBundleIdsByLabels(subjectId, chapter, minPts, maxPts, labelScope.enums, false);
+
         if (bundleIds.isEmpty()) {
             out.errors.add("Step#" + (stepIdx+1) + " selector#" + (selIdx+1) + " (bundle by chapter) không có ứng viên.");
             return null;
@@ -293,8 +402,12 @@ public class AutoPaperService {
         Map<Long, List<Long>> bundleItemsCache = new HashMap<>();
 
         for (Long bid : bundleIds) {
-            List<Long> qids = bundleRepo.findQuestionIdsInBundle(bid);
+            // lấy qids trong bundle
+            List<Long> rawQids = bundleRepo.findActiveQuestionIdsInBundle(bid);
+            // lọc bỏ question đã soft-delete bằng repo findByIdIn (đã lọc isDeleted=false)
+            List<Long> qids = questionRepo.findByIdIn(rawQids).stream().map(q -> q.getId()).toList();
             bundleItemsCache.put(bid, qids);
+            if (qids.isEmpty()) continue;
             if (qids.stream().anyMatch(banned::contains)) continue;
             okBundles.add(bid);
         }
@@ -324,14 +437,10 @@ public class AutoPaperService {
         BigDecimal maxPts = (sel.pointsEq != null ? sel.pointsEq :
                 (sel.pointsMax != null ? sel.pointsMax : new BigDecimal("9999")));
 
-        List<Long> bundleIds;
-        if (labelScope.empty) {
-            bundleIds = bundleRepo.findCandidateBundleIds(subjectId, chapter, minPts, maxPts);
-        } else {
-            bundleIds = bundleRepo.findCandidateBundleIdsByLabels(
-                    subjectId, chapter, minPts, maxPts, labelScope.enums, false
-            );
-        }
+        List<Long> bundleIds = labelScope.empty
+                ? bundleRepo.findCandidateBundleIds(subjectId, chapter, minPts, maxPts)
+                : bundleRepo.findCandidateBundleIdsByLabels(subjectId, chapter, minPts, maxPts, labelScope.enums, false);
+
         if (bundleIds.isEmpty()) {
             out.errors.add("Step#" + (stepIdx+1) + " selector#" + (selIdx+1) + " (bundle by type) không có ứng viên.");
             return null;
@@ -346,7 +455,11 @@ public class AutoPaperService {
         Map<Long, List<Long>> bundleItems = new HashMap<>();
 
         for (Long bid : bundleIds) {
-            List<Long> qids = bundleItems.computeIfAbsent(bid, bundleRepo::findQuestionIdsInBundle);
+            // qids trong bundle (lọc non-deleted)
+            List<Long> rawQids = bundleRepo.findActiveQuestionIdsInBundle(bid);
+            List<Long> qids = questionRepo.findByIdIn(rawQids).stream().map(q -> q.getId()).toList();
+            bundleItems.put(bid, qids);
+            if (qids.isEmpty()) continue;
             if (qids.stream().anyMatch(banned::contains)) continue;
 
             boolean typeOk = qids.stream().allMatch(qid -> {
@@ -439,4 +552,6 @@ public class AutoPaperService {
         specs.add(QuestionMetaSpecs.status(st));
         return Specification.allOf(specs);
     }
+
+
 }

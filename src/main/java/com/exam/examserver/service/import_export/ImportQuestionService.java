@@ -4,6 +4,7 @@ import com.exam.examserver.dto.exam.CreateQuestionDTO;
 import com.exam.examserver.dto.exam.QuestionDTO;
 import com.exam.examserver.dto.importing.*;
 import com.exam.examserver.enums.*;
+import com.exam.examserver.model.exam.QuestionBundle;
 import com.exam.examserver.repo.QuestionRepository;
 import com.exam.examserver.service.BundleService;
 import com.exam.examserver.service.QuestionMetaService;
@@ -138,8 +139,8 @@ public class ImportQuestionService {
 
                 // === MÃ XEM TRƯỚC THEO TYPE (KHÔNG DÙNG INDEX) ===
                 String typeCode = extractNumericTypeCode(block);   // ví dụ: "1.1", "2.1.1"
-                b.headerNo = typeCode;                                         // giữ để dùng ở commit
-                String prefix = choosePrefix(b.labels);                         // OT | TC
+                b.headerNo = typeCode;
+                String prefix = choosePrefix(b.labels);             // OT | TC
                 b.previewPrefix = prefix;
 
                 if (typeCode != null) {
@@ -156,12 +157,53 @@ public class ImportQuestionService {
                     } else {
                         b.previewCode = buildCodeFromType(prefix, typeCode, null);                 // MCQ: TC2.1
                     }
-                } // else: để trống mã xem trước
+                }
 
-                // ===== duplicate-check (giữ nguyên) =====
-                var probe = (b.questionType == QuestionType.MULTIPLE_CHOICE)
+                // ===== BUNDLE-LEVEL duplicate check (điểm thật) =====
+                try {
+                    var sr = splitEssaySubitemsWithStem(firstNonNull(b.raw, b.content));
+                    if (sr.parts() != null && sr.parts().size() >= 2) {
+                        // Chuẩn hoá stem giống commit
+                        String stemClean = normalizeStem(sr.stem());
+
+                        // Probe + FP cho bundle preview
+                        String bProbe = fingerprintService.buildBundleProbe(stemClean, sr.parts());
+                        var bfp = fingerprintService.build(bProbe);
+
+                        // Lấy ứng viên qua LSH + chấm điểm thật (Hamming/TF-IDF)
+                        Map<Long, Double> scored = fingerprintService.scoreBundleCandidates(subjectId, bProbe, bfp, 200);
+
+                        if (scored != null && !scored.isEmpty()) {
+                            // sắp xếp theo score giảm dần
+                            var sorted = scored.entrySet().stream()
+                                    .sorted((e1, e2) -> Double.compare(e2.getValue(), e1.getValue()))
+                                    .toList();
+
+                            double bestB = sorted.get(0).getValue();
+                            List<Long> dupB = sorted.stream()
+                                    .filter(e -> e.getValue() >= 0.70)   // ngưỡng nghi trùng
+                                    .map(Map.Entry::getKey)
+                                    .toList();
+
+                            b.duplicateBundleIds = new ArrayList<>(dupB);
+                            b.duplicateBundleScore = bestB;
+
+                            if (bestB >= 0.85) {
+                                b.warnings.add("Nghi ngờ trùng khối câu hỏi hiện có.");
+                            }
+                        } else {
+                            b.duplicateBundleIds = java.util.Collections.emptyList();
+                            b.duplicateBundleScore = null;
+                        }
+                    }
+                } catch (Exception ignore) {
+                    // Không chặn preview nếu check bundle lỗi
+                }
+
+                // ===== duplicate-check câu đơn (giữ nguyên, nhưng probe gồm content + answerText cho ESSAY) =====
+                String probe = (b.questionType == QuestionType.MULTIPLE_CHOICE)
                         ? TextSim.packMultipleChoice(b.content, b.optionA, b.optionB, b.optionC, b.optionD)
-                        : b.content;
+                        : ((b.content == null ? "" : b.content) + "\n" + (b.answerText == null ? "" : b.answerText));
                 var fp = fingerprintService.build(probe);
                 var candIds = fingerprintService.candidates(subjectId, fp, 200);
                 var cands = questionService.findByIds(candIds);
@@ -171,15 +213,16 @@ public class ImportQuestionService {
                 for (var dto : cands) {
                     String otherProbe = (dto.getQuestionType() == QuestionType.MULTIPLE_CHOICE)
                             ? TextSim.packMultipleChoice(dto.getContent(), dto.getOptionA(), dto.getOptionB(), dto.getOptionC(), dto.getOptionD())
-                            : ((dto.getContent()==null?"":dto.getContent()) + "\n" + (dto.getAnswerText()==null?"":dto.getAnswerText()));
+                            : ((dto.getContent() == null ? "" : dto.getContent()) + "\n" + (dto.getAnswerText() == null ? "" : dto.getAnswerText()));
                     var otherFp = fingerprintService.build(otherProbe);
                     int ham = com.exam.examserver.util.simhash.SimHash64.hamming(fp.simhash(), otherFp.simhash());
-                    double score = (ham <= 3) ? 0.95 : (ham <= 6 ? com.exam.examserver.util.simhash.TfidfCosine.cosine(probe, otherProbe) : 0.0);
+                    double score = (ham <= 3) ? 0.95
+                            : (ham <= 6 ? com.exam.examserver.util.simhash.TfidfCosine.cosine(probe, otherProbe) : 0.0);
                     if (score >= 0.70) { dupIds.add(dto.getId()); best = Math.max(best, score); }
                 }
                 b.duplicateOfIds = dupIds;
                 b.duplicateScore = best;
-                if (best >= 0.85) b.warnings.add("Nghi ngờ trùng câu hỏi (≈ " + Math.round(best*100) + "%).");
+                if (best >= 0.85) b.warnings.add("Nghi ngờ trùng câu hỏi (≈ " + Math.round(best * 100) + "%).");
 
                 blocks.add(b);
             }
@@ -204,7 +247,7 @@ public class ImportQuestionService {
         return resp;
     }
 
-    public ImportResult commitPreview(Long subjectId, Long userId, CommitRequest req, boolean saveCopy) {
+    public ImportResult commitPreview(Long subjectId, Long userId, CommitRequest req, boolean saveCopy)     {
         var session = previewStore.get(req.sessionId);
         if (session == null) throw new IllegalArgumentException("Preview session expired or not found");
 
@@ -322,7 +365,14 @@ public class ImportQuestionService {
                                 SplitResult sr = splitEssaySubitemsWithStem(sourceForType);
                                 String stemClean = normalizeStem(sr.stem());
                                 String bundleTitle = "Câu " + (typeCode == null ? "" : typeCode);
-                                bundleService.create(subjectId, userId, bundleTitle, stemClean, items, null, RecordStatus.DRAFT);
+                                QuestionBundle b = bundleService.create(subjectId, userId, bundleTitle, stemClean, items, null, RecordStatus.DRAFT);
+                                try {
+                                    String bundleProbe = fingerprintService.buildBundleProbe(stemClean, sr.parts());
+                                    var fp = fingerprintService.build(bundleProbe);
+                                    fingerprintService.upsertBundle(b.getId(), subjectId, bundleProbe);
+                                } catch (Exception bex) {
+                                    errors.add(String.format("Block#%d bundle FP ERROR: %s", cb.index, bex.getMessage()));
+                                }
                             } catch (Exception bex) {
                                 errors.add(String.format("Block#%d bundle ERROR: %s", cb.index, bex.getMessage()));
                             }
@@ -793,7 +843,7 @@ public class ImportQuestionService {
 
     /** OT nếu có PRACTICE, ngược lại TC */
     private static String choosePrefix(Set<QuestionLabel> labels) {
-        return (labels != null && labels.contains(QuestionLabel.PRACTICE)) ? "OT" : "TC";
+        return (labels != null && labels.contains(QuestionLabel.PRACTICE)) ? "OT" : "NH";
     }
 
     /** Ghép mã theo TYPE: TC2.1.1 hoặc TC2.1.1.a) */

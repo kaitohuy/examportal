@@ -28,4 +28,7 @@ public class PreviewBlock {
     public String previewPrefix;   // "OT"/"TC"
     public String previewCode;     // nếu câu đơn
     public List<String> previewSubCodes; // nếu tách a)/b)/c)
+
+    public Double duplicateBundleScore;   // điểm best với bundle
+    public List<Long> duplicateBundleIds; // list ứng viên bundle
 }

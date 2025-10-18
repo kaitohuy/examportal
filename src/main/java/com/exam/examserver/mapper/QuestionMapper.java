@@ -13,9 +13,9 @@ import java.util.List;
 @Mapper(componentModel = "spring", uses = {UserMapper.class})
 public interface QuestionMapper {
 
+    @Mapping(target = "subjectId", source = "subject.id")
     @Mapping(target = "createdBy", source = "createdBy", qualifiedByName = "mapToUserBasicDto")
     @Mapping(target = "images", source = "images")
-    // labels map thẳng
     @Mapping(target = "labels", source = "labels")
     @Mapping(target = "parentId", source = "parent.id")
     QuestionDTO toDto(Question question);

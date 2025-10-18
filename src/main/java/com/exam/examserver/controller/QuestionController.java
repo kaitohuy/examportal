@@ -2,10 +2,7 @@ package com.exam.examserver.controller;
 
 import com.exam.examserver.dto.ai.AiSuggestRequest;
 import com.exam.examserver.dto.ai.AiSuggestResponse;
-import com.exam.examserver.dto.exam.BulkSelectionRequest;
-import com.exam.examserver.dto.exam.CreateQuestionDTO;
-import com.exam.examserver.dto.exam.QuestionDTO;
-import com.exam.examserver.dto.exam.QuestionFilter;
+import com.exam.examserver.dto.exam.*;
 import com.exam.examserver.dto.importing.CommitRequest;
 import com.exam.examserver.dto.importing.PreviewResponse;
 import com.exam.examserver.dto.importing.ImportResult;
@@ -16,6 +13,7 @@ import com.exam.examserver.model.exam.CloneRequest;
 import com.exam.examserver.model.exam.Subject;
 import com.exam.examserver.model.user.CustomUserDetails;
 import com.exam.examserver.dto.importing.ImportPreviewStore;
+import com.exam.examserver.repo.QuestionBundleRepository;
 import com.exam.examserver.service.AiSuggestService;
 import com.exam.examserver.service.SubjectService;
 import com.exam.examserver.service.import_export.FileArchiveService;
@@ -49,6 +47,7 @@ public class QuestionController {
     private final ImportPreviewStore previewStore;
     private final FileArchiveService fileArchiveService;
     private final AiSuggestService aiSuggestService;
+    private final QuestionBundleRepository bundleRepo;
     private final Tika tika = new Tika();
     private final Map<Long, Deque<Long>> aiBuckets = new ConcurrentHashMap<>();
 
@@ -58,7 +57,7 @@ public class QuestionController {
                               ExportQuestionService exportQuestionService,
                               ImportQuestionService importService,
                               ImportPreviewStore previewStore,
-                              FileArchiveService fileArchiveService, AiSuggestService aiSuggestService) {
+                              FileArchiveService fileArchiveService, AiSuggestService aiSuggestService, QuestionBundleRepository bundleRepo) {
         this.questionService = questionService;
         this.subjectService = subjectService;
         this.exportQuestionService = exportQuestionService;
@@ -66,6 +65,7 @@ public class QuestionController {
         this.previewStore = previewStore;
         this.fileArchiveService = fileArchiveService;
         this.aiSuggestService = aiSuggestService;
+        this.bundleRepo = bundleRepo;
     }
 
     @GetMapping("/{questionId}")
@@ -158,8 +158,8 @@ public class QuestionController {
             } else {
                 ExportQuestionService.ExamHeader eh = new ExportQuestionService.ExamHeader(
                         "HỌC VIỆN CÔNG NGHỆ BƯU CHÍNH VIỄN THÔNG",
-                        (subj.getDepartment() != null ? subj.getDepartment().getName() : ""),
                         (program == null ? "" : program),
+                        (subj.getDepartment() != null ? subj.getDepartment().getName() : ""),
                         subj.getName(),
                         subj.getCode(),
                         (semester == null ? "" : semester),
@@ -373,6 +373,19 @@ public class QuestionController {
         return ResponseEntity.ok(Map.of("deleted", deleted, "requested", ids.size()));
     }
 
+    @GetMapping("/lookup")
+    public List<QuestionDTO> lookupQuestions(@PathVariable Long subjectId,
+                                             @RequestParam List<Long> ids) {
+        if (ids == null || ids.isEmpty()) return List.of();
+        // lấy theo danh sách, giữ đúng thứ tự ids
+        List<QuestionDTO> rows = questionService.findByIds(ids);
+        // (tuỳ chọn) lọc về đúng subject + chỉ câu gốc
+        return rows.stream()
+                .filter(q -> q.getSubjectId() != null && q.getSubjectId().equals(subjectId))
+                .filter(q -> q.getParentId() == null)        // chỉ root (nếu DTO có parentId)
+                .toList();
+    }
+
     @PostMapping("/ai/suggest")
     public AiSuggestResponse suggestAnswer(@PathVariable Long subjectId,
                                            @RequestBody AiSuggestRequest req,
@@ -401,5 +414,53 @@ public class QuestionController {
     }
     public static class LocalRateLimitException extends RuntimeException {
         public LocalRateLimitException(String msg) { super(msg); }
+    }
+
+    // QuestionController
+    @GetMapping("/trash")
+    public Page<QuestionDTO> listDeleted(
+            @PathVariable Long subjectId,
+            @RequestParam(name="labels", required=false) Set<QuestionLabel> labels,
+            @RequestParam(name="difficulty", required=false) Difficulty difficulty,
+            @RequestParam(name="chapter", required=false) Integer chapter,
+            @RequestParam(name="type", required=false) QuestionType type,
+            @RequestParam(name="createdBy", required=false) String createdBy,
+            @RequestParam(name="from", required=false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
+            @RequestParam(name="to", required=false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
+            @RequestParam(name="q", required=false) String q,
+            @PageableDefault(size=20, sort="deletedAt", direction=org.springframework.data.domain.Sort.Direction.DESC) Pageable pageable
+    ) {
+        var f = new QuestionFilter();
+        f.setLabels(labels); f.setDifficulty(difficulty); f.setChapter(chapter);
+        f.setType(type); f.setCreatedBy(createdBy); f.setFrom(from); f.setTo(to);
+        f.setQ(q);
+        // service mới: pageDeletedBySubject (giống pageBySubject nhưng dùng QuestionSpecs.deletedOnly())
+        return questionService.pageDeletedBySubject(subjectId, f, pageable);
+    }
+
+    @PostMapping("/{questionId}/restore")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void restore(@PathVariable Long subjectId, @PathVariable Long questionId) {
+        questionService.restore(questionId);
+    }
+
+    @PostMapping("/bulk-restore")
+    public Map<String,Object> bulkRestore(@PathVariable Long subjectId, @RequestBody BulkSelectionRequest sel) {
+        var ids = resolveSelectionToIds(subjectId, sel);
+        int ok=0; for (Long id: ids) { questionService.restore(id); ok++; }
+        return Map.of("restored", ok, "requested", ids.size());
+    }
+
+    @DeleteMapping("/{questionId}/purge")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void purge(@PathVariable Long subjectId, @PathVariable Long questionId) {
+        questionService.purge(questionId);
+    }
+
+    @PostMapping("/bulk-purge")
+    public Map<String,Object> bulkPurge(@PathVariable Long subjectId, @RequestBody BulkSelectionRequest sel) {
+        var ids = resolveSelectionToIds(subjectId, sel);
+        int ok=0; for (Long id: ids) { questionService.purge(id); ok++; }
+        return Map.of("purged", ok, "requested", ids.size());
     }
 }

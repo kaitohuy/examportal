@@ -26,7 +26,6 @@ public final class QuestionSpecs {
     public static Specification<Question> hasAnyLabel(Set<QuestionLabel> labels) {
         return (root, query, cb) -> {
             if (labels == null || labels.isEmpty()) return cb.conjunction();
-            // join ElementCollection
             Join<Object, Object> jl = root.join("labels", JoinType.LEFT);
             query.distinct(true);
             CriteriaBuilder.In<Object> in = cb.in(jl);
@@ -82,25 +81,47 @@ public final class QuestionSpecs {
             );
         };
     }
+
+    // OLD (comment): dùng Specification.where(null)
+    /*
     public static Specification<Question> flagged(Boolean flagged) {
         if (flagged == null) return Specification.where(null);
         return (root, query, cb) -> {
-            // subquery: select 1 from question_issue qi where qi.question.id = question.id and qi.status = 'OPEN'
             var sub = query.subquery(Long.class);
             var qi = sub.from(QuestionIssue.class);
             var statusPath = qi.get("status");
             sub.select(cb.literal(1L))
+               .where(
+                    cb.equal(qi.get("question").get("id"), root.get("id")),
+                    cb.equal(statusPath, IssueStatus.OPEN)
+               );
+            if (flagged) return cb.exists(sub);
+            else return cb.not(cb.exists(sub));
+        };
+    }
+    */
+
+    // NEW: trả về cb.conjunction() khi flagged == null
+    public static Specification<Question> flagged(Boolean flagged) {
+        if (flagged == null) return (root, query, cb) -> cb.conjunction();
+        return (root, query, cb) -> {
+            assert query != null;
+            Subquery<Long> sub = query.subquery(Long.class);
+            Root<QuestionIssue> qi = sub.from(QuestionIssue.class);
+            sub.select(cb.literal(1L))
                     .where(
                             cb.equal(qi.get("question").get("id"), root.get("id")),
-                            cb.equal(statusPath, IssueStatus.OPEN)
+                            cb.equal(qi.get("status"), IssueStatus.OPEN)
                     );
-
-            if (flagged) {
-                return cb.exists(sub);          // chỉ câu có issue OPEN
-            } else {
-                return cb.not(cb.exists(sub));  // chỉ câu không có issue OPEN
-            }
+            return flagged ? cb.exists(sub) : cb.not(cb.exists(sub));
         };
     }
 
+    /** NEW: lọc các câu chưa bị đưa vào thùng rác */
+    public static Specification<Question> notDeleted() {
+        return (root, q, cb) -> cb.isFalse(root.get("isDeleted"));
+    }
+    public static Specification<Question> deletedOnly() {
+        return (root, q, cb) -> cb.isTrue(root.get("isDeleted"));
+    }
 }

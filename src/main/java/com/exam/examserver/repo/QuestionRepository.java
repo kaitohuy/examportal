@@ -13,16 +13,25 @@ import java.util.Collection;
 import java.util.List;
 
 public interface QuestionRepository extends JpaRepository<Question, Long>, JpaSpecificationExecutor<Question> {
+
     // (giữ lại các helper khác vẫn dùng)
     List<Question> findByDifficulty(Difficulty difficulty);
 
     @Query("SELECT q FROM Question q WHERE q.content = :content")
     Question findFirstByContent(@Param("content") String content);
 
-    @EntityGraph(attributePaths = {"labels", "createdBy"})
-    List<Question> findByIdIn(Collection<Long> ids);
+    // OLD (comment): lấy theo id không lọc thùng rác
+    // @EntityGraph(attributePaths = {"labels", "createdBy"})
+    // List<Question> findByIdIn(Collection<Long> ids);
 
-    // Clones (vẫn dùng paging version)
+    // NEW: luôn lọc isDeleted=false
+    @EntityGraph(attributePaths = {"labels", "createdBy"})
+    @Query("select q from Question q where q.id in :ids and q.isDeleted = false")
+    List<Question> findByIdIn(@Param("ids") Collection<Long> ids);
+
+    // Clones (paging)
+    // OLD (comment): không lọc thùng rác
+    /*
     @EntityGraph(attributePaths = {"labels", "createdBy"})
     @Query(value = """
        SELECT q FROM Question q
@@ -34,11 +43,25 @@ public interface QuestionRepository extends JpaRepository<Question, Long>, JpaSp
        WHERE q.parent.id = :parentId
        """)
     Page<Question> findClonesByParentId(@Param("parentId") Long parentId, Pageable pageable);
+    */
+
+    // NEW: chỉ lấy clones còn hoạt động
+    @EntityGraph(attributePaths = {"labels", "createdBy"})
+    @Query(value = """
+       SELECT q FROM Question q
+       WHERE q.parent.id = :parentId and q.isDeleted = false
+       ORDER BY q.cloneIndex ASC
+       """,
+            countQuery = """
+       SELECT COUNT(q) FROM Question q
+       WHERE q.parent.id = :parentId and q.isDeleted = false
+       """)
+    Page<Question> findClonesByParentId(@Param("parentId") Long parentId, Pageable pageable);
 
     @Query("select coalesce(max(q.cloneIndex), 0) from Question q where q.parent.id = :parentId")
     Integer findMaxCloneIndexByParentId(@Param("parentId") Long parentId);
 
-    // ===== COUNTS (giữ nguyên vì có thể dùng chỗ khác) =====
+    // ===== COUNTS (giữ nguyên) =====
     long countByCreatedAtBetween(LocalDateTime from, LocalDateTime to);
     long countByCreatedAtGreaterThanEqual(LocalDateTime from);
     long countByCreatedAtLessThan(LocalDateTime to);
@@ -64,21 +87,50 @@ public interface QuestionRepository extends JpaRepository<Question, Long>, JpaSp
     long countByLabelTo(@Param("label") QuestionLabel label,
                         @Param("to")   LocalDateTime to);
 
-    List<Question> findByIdIn(List<Long> ids);
+    // OLD (comment) duplicate signature from above; left for reference
+    // List<Question> findByIdIn(List<Long> ids);
 
     boolean existsBySubjectIdAndQuestionCode(Long subjectId, String questionCode);
-
     boolean existsBySubjectIdAndQuestionCodeIgnoreCase(Long subjectId, String questionCode);
+
+    // NEW (tuỳ chính sách reuse code): kiểm tra trùng code chỉ trong các bản chưa xoá
+    boolean existsBySubjectIdAndQuestionCodeAndIsDeletedFalse(Long subjectId, String questionCode);
+    boolean existsBySubjectIdAndQuestionCodeIgnoreCaseAndIsDeletedFalse(Long subjectId, String questionCode);
 
     @Modifying
     @Query("update Question q set q.questionCode=:code where q.id=:id")
     int updateQuestionCode(@Param("id") Long id, @Param("code") String code);
 
+    // OLD (comment): chưa lọc q.isDeleted
+    /*
     @Query("""
     select q.id
     from Question q
       join QuestionMeta qm on qm.questionId = q.id
     where q.subject.id = :subjectId
+      and qm.status = com.exam.examserver.enums.RecordStatus.APPROVED
+      and (:chapter is null or qm.chapter = :chapter)
+      and (
+        :labelsEmpty = true or
+        exists (
+          select 1 from Question qq join qq.labels lb
+          where qq.id = q.id and lb in :labels
+        )
+      )
+  """)
+    List<Long> findApprovedIdsByScopeAndLabels(@Param("subjectId") Long subjectId,
+                                               @Param("chapter") Integer chapter,
+                                               @Param("labels") Collection<QuestionLabel> labels,
+                                               @Param("labelsEmpty") boolean labelsEmpty);
+    */
+
+    // NEW: chỉ trả id câu APPROVED mà chưa bị xoá
+    @Query("""
+    select q.id
+    from Question q
+      join QuestionMeta qm on qm.questionId = q.id
+    where q.isDeleted = false
+      and q.subject.id = :subjectId
       and qm.status = com.exam.examserver.enums.RecordStatus.APPROVED
       and (:chapter is null or qm.chapter = :chapter)
       and (
