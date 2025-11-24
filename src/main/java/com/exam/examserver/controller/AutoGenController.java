@@ -133,11 +133,11 @@ public class AutoGenController {
             zos.closeEntry();
 
             // 3c) blueprint.json — để build đáp án khi approve submission
-            String bpJson = buildBlueprintJson(resp);
-            ZipEntry eBp = new ZipEntry("blueprint.json");
-            zos.putNextEntry(eBp);
-            zos.write(bpJson.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            zos.closeEntry();
+//            String bpJson = buildBlueprintJson(resp);
+//            ZipEntry eBp = new ZipEntry("blueprint.json");
+//            zos.putNextEntry(eBp);
+//            zos.write(bpJson.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+//            zos.closeEntry();
         }
 
         byte[] zipBytes = baos.toByteArray();
@@ -171,41 +171,41 @@ public class AutoGenController {
         return new ResponseEntity<>(zipBytes, headers, HttpStatus.OK);
     }
 
-    private String buildBlueprintJson(AutoGenPreviewResponse resp) throws Exception {
-        Map<String, Object> root = new LinkedHashMap<>();
-        int N = Math.max(0, resp.variants);
-        int R = (resp.rows == null ? 0 : resp.rows.size());
-
-        root.put("variants", N);
-        List<Map<String,Object>> rows = new ArrayList<>();
-        for (int r = 0; r < R; r++) {
-            var row = resp.rows.get(r);
-            List<Map<String, Object>> cells = new ArrayList<>(N);
-
-            for (int k = 0; k < N; k++) {
-                var cell = row.columns.get(k);
-                List<Long> ids = (cell == null || cell.questionIds == null)
-                        ? List.of() : cell.questionIds;
-
-                // map id -> code (nếu Question có trường code; đổi getter cho đúng thực tế của bạn)
-                List<String> codes = ids.isEmpty()
-                        ? List.of()
-                        : questionRepo.findAllById(ids).stream()
-                        .map(q -> q.getQuestionCode()) // hoặc getCode()
-                        .filter(Objects::nonNull)
-                        .toList();
-
-                Map<String, Object> cellObj = new LinkedHashMap<>();
-                cellObj.put("ids", ids);
-                cellObj.put("codes", codes); // để rỗng nếu bạn chưa cần
-
-                cells.add(cellObj);
-            }
-            Map<String,Object> rowObj = new LinkedHashMap<>();
-            rowObj.put("cells", cells);
-            rows.add(rowObj);
-        }
-        root.put("rows", rows);
-        return om.writeValueAsString(root);
-    }
+//    private String buildBlueprintJson(AutoGenPreviewResponse resp) throws Exception {
+//        Map<String, Object> root = new LinkedHashMap<>();
+//        int N = Math.max(0, resp.variants);
+//        int R = (resp.rows == null ? 0 : resp.rows.size());
+//
+//        root.put("variants", N);
+//        List<Map<String,Object>> rows = new ArrayList<>();
+//        for (int r = 0; r < R; r++) {
+//            var row = resp.rows.get(r);
+//            List<Map<String, Object>> cells = new ArrayList<>(N);
+//
+//            for (int k = 0; k < N; k++) {
+//                var cell = row.columns.get(k);
+//                List<Long> ids = (cell == null || cell.questionIds == null)
+//                        ? List.of() : cell.questionIds;
+//
+//                // map id -> code (nếu Question có trường code; đổi getter cho đúng thực tế của bạn)
+//                List<String> codes = ids.isEmpty()
+//                        ? List.of()
+//                        : questionRepo.findAllById(ids).stream()
+//                        .map(q -> q.getQuestionCode()) // hoặc getCode()
+//                        .filter(Objects::nonNull)
+//                        .toList();
+//
+//                Map<String, Object> cellObj = new LinkedHashMap<>();
+//                cellObj.put("ids", ids);
+//                cellObj.put("codes", codes); // để rỗng nếu bạn chưa cần
+//
+//                cells.add(cellObj);
+//            }
+//            Map<String,Object> rowObj = new LinkedHashMap<>();
+//            rowObj.put("cells", cells);
+//            rows.add(rowObj);
+//        }
+//        root.put("rows", rows);
+//        return om.writeValueAsString(root);
+//    }
 }
