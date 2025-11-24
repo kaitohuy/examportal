@@ -8,7 +8,10 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 public interface QuestionService {
     QuestionDTO getById(Long questionId);
@@ -44,4 +47,14 @@ public interface QuestionService {
 
     void updateQuestionCode(Long questionId, String code);
     boolean codeExists(Long subjectId, String code);
+
+    int purgeAll(Collection<Long> ids);
+
+    List<Long> findIdsByCodes(List<String> codes);
+
+    Map<String, Long> findIdMapByCodes(Collection<String> codes);
+
+    void convertToClone(Long questionId, Long parentId, int cloneIndex, String finalCode);
+    Optional<Long> findParentIdByCode(Long subjectId, String baseCode);  // tiện lookup nhanh
+
 }

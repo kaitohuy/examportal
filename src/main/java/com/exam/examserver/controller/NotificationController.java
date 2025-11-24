@@ -5,9 +5,12 @@ import com.exam.examserver.model.Notification;
 import com.exam.examserver.model.user.CustomUserDetails;
 import com.exam.examserver.service.impl.NotificationService;
 import org.springframework.data.domain.Page;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/notifications")
@@ -49,5 +52,18 @@ public class NotificationController {
     @DeleteMapping("/{id}")
     public void deleteOne(Authentication auth, @PathVariable Long id) {
         service.deleteOne(uid(auth), id);
+    }
+
+    @PostMapping("/{id}/click")
+    public Map<String, String> click(Authentication auth, @PathVariable Long id) {
+        String url = service.clickAndResolve(uid(auth), id);
+        return Map.of("url", url);
+    }
+
+    // Optional: nếu muốn dùng cho email/push → 302 redirect
+    @GetMapping("/{id}/go")
+    public ResponseEntity<Void> go(Authentication auth, @PathVariable Long id) {
+        String url = service.clickAndResolve(uid(auth), id);
+        return ResponseEntity.status(302).header("Location", url).build();
     }
 }

@@ -159,6 +159,44 @@ public class ImportQuestionService {
                     }
                 }
 
+                // === Dự đoán mã clone nếu user có "(Mã: ...)" ===
+                try {
+                    String sourceRaw = firstNonNull(b.raw, b.content);
+                    String declared = extractDeclaredCode(sourceRaw);
+                    if (declared != null && !declared.isBlank()) {
+                        b.declaredCode = declared.trim();
+
+                        // parseCloneCode(declared) -> (desiredIdx, baseCode)
+                        var pr = parseCloneCode(declared);
+                        Integer desiredIdx = pr.getKey();
+                        String baseCode = pr.getValue();    // ví dụ "OT2.1.1"
+                        b.cloneBaseCode = baseCode;
+                        b.cloneDesiredIndex = desiredIdx;
+
+                        if (baseCode != null && !baseCode.isBlank()) {
+                            Long parentId = questionService.findParentIdByCode(subjectId, baseCode).orElse(null);
+                            if (parentId != null) {
+                                int max = questionRepository.findMaxCloneIndexByParentId(parentId);
+                                int nextIdx;
+                                if (desiredIdx == null) {
+                                    nextIdx = max + 1;
+                                } else {
+                                    nextIdx = desiredIdx;
+                                    // nhảy qua index đã tồn tại
+                                    while (questionRepository.existsBySubjectIdAndQuestionCodeIgnoreCase(
+                                            subjectId, "C" + nextIdx + "." + baseCode)) {
+                                        nextIdx++;
+                                    }
+                                }
+                                b.cloneNextIndex = nextIdx;
+                                b.clonePreviewCode = "C" + nextIdx + "." + baseCode; // ← FE sẽ hiển thị
+                            } else {
+                                b.warnings.add("Không tìm thấy câu gốc theo mã: " + baseCode);
+                            }
+                        }
+                    }
+                } catch (Exception ignore) {}
+
                 // ===== BUNDLE-LEVEL duplicate check (điểm thật) =====
                 try {
                     var sr = splitEssaySubitemsWithStem(firstNonNull(b.raw, b.content));
@@ -247,7 +285,8 @@ public class ImportQuestionService {
         return resp;
     }
 
-    public ImportResult commitPreview(Long subjectId, Long userId, CommitRequest req, boolean saveCopy)     {
+    // ImportQuestionService.java
+    public ImportResult commitPreview(Long subjectId, Long userId, CommitRequest req, boolean saveCopy) {
         var session = previewStore.get(req.sessionId);
         if (session == null) throw new IllegalArgumentException("Preview session expired or not found");
 
@@ -294,17 +333,26 @@ public class ImportQuestionService {
                                 : EnumSet.of(QuestionLabel.PRACTICE);
                 dto.setLabels(labels);
 
-                // === typeCode dùng cho questionCode
-                String sourceForType = firstNonNull(orig.raw, cb.content, orig.content);
-                String typeCode = firstNonNull(orig.headerNo, extractNumericTypeCode(sourceForType), null);
-                String prefix = choosePrefix(labels);
+                // === Nguồn để bắt TYPE/CODE; cắt “Mã: …” trước khi tách số/ý
+                String sourceRaw   = firstNonNull(orig.raw, cb.content, orig.content);
+                String declared    = extractDeclaredCode(sourceRaw);         // để xử lý clone
+                String sourceClean = stripCodeDeclaration(sourceRaw);        // để phân tích nội dung
+                String typeCode    = firstNonNull(orig.headerNo, extractNumericTypeCode(sourceClean), null);
+                String prefix      = choosePrefix(labels);
 
-                // ===== ESSAY có a)/b)/c)
+                // Nếu có "Mã:" -> chuẩn bị thông tin clone (C#.<base> hoặc chỉ <base>)
+                Integer desiredIdx = null; String baseCode = null;
+                if (declared != null) {
+                    var pr = parseCloneCode(declared);
+                    desiredIdx = pr.getKey();       // null nếu chỉ ghi base
+                    baseCode   = pr.getValue();     // mã gốc (giữ ')')
+                }
+
+                // ===== ESSAY có a)/b)/c) =====
                 if (qt == QuestionType.ESSAY) {
-                    List<String> parts = splitEssaySubitems(sourceForType);
+                    List<String> parts = splitEssaySubitems(sourceClean);
                     if (parts.size() >= 2) {
                         List<Long> createdIds = new ArrayList<>();
-
                         for (int i = 0; i < parts.size(); i++) {
                             String seg = parts.get(i);
                             try {
@@ -319,14 +367,14 @@ public class ImportQuestionService {
                                 QuestionDTO subSaved = questionService.create(subjectId, sub, userId, null);
                                 Long subId = subSaved.getId();
 
-                                // Gán code theo TYPE (nếu có)
+                                // gán code theo TYPE nếu có
                                 if (typeCode != null) {
                                     String rawCode = buildCodeFromType(prefix, typeCode, i + 1); // TC2.1.1.a)
                                     String qc = ensureUniqueCode(subjectId, rawCode);
                                     questionService.updateQuestionCode(subId, qc);
                                 }
 
-                                // ảnh (giữ nguyên)
+                                // ảnh
                                 List<Integer> imgIdxs = (cb.imageIndexes != null && !cb.imageIndexes.isEmpty())
                                         ? cb.imageIndexes : orig.imageIndexes;
                                 if (imgIdxs != null && !imgIdxs.isEmpty()) {
@@ -355,14 +403,14 @@ public class ImportQuestionService {
                             }
                         }
 
-                        // bundle ≥2 sub (giữ nguyên)
+                        // bundle ≥2 sub
                         if (createdIds.size() >= 2) {
                             try {
                                 List<BundleService.CreateItem> items = new ArrayList<>();
                                 for (int i = 0; i < createdIds.size(); i++) {
                                     items.add(new BundleService.CreateItem(createdIds.get(i), i + 1, null, "auto-split"));
                                 }
-                                SplitResult sr = splitEssaySubitemsWithStem(sourceForType);
+                                SplitResult sr = splitEssaySubitemsWithStem(sourceClean);
                                 String stemClean = normalizeStem(sr.stem());
                                 String bundleTitle = "Câu " + (typeCode == null ? "" : typeCode);
                                 QuestionBundle b = bundleService.create(subjectId, userId, bundleTitle, stemClean, items, null, RecordStatus.DRAFT);
@@ -377,11 +425,11 @@ public class ImportQuestionService {
                                 errors.add(String.format("Block#%d bundle ERROR: %s", cb.index, bex.getMessage()));
                             }
                         }
-                        continue; // xong block đã tách
+                        continue;
                     }
                 }
 
-                // ===== CÂU ĐƠN
+                // ===== CÂU ĐƠN =====
                 QuestionDTO saved = questionService.create(subjectId, dto, userId, null);
                 Long qId = saved.getId();
 
@@ -391,7 +439,7 @@ public class ImportQuestionService {
                     questionService.updateQuestionCode(qId, qc);
                 }
 
-                // ảnh (giữ nguyên)
+                // ảnh
                 List<Integer> imgIdxs = (cb.imageIndexes != null && !cb.imageIndexes.isEmpty())
                         ? cb.imageIndexes : orig.imageIndexes;
                 if (imgIdxs != null && !imgIdxs.isEmpty()) {
@@ -405,8 +453,28 @@ public class ImportQuestionService {
                     if (!urls.isEmpty()) questionService.addImages(qId, urls);
                 }
 
-                // meta (giữ nguyên)
-                var meta = questionMetaService.upsertDefault(
+                // Nếu có "Mã:" → convert thành clone
+                if (baseCode != null && !baseCode.isBlank()) {
+                    Long parentId = questionService.findParentIdByCode(subjectId, baseCode).orElse(null);
+                    if (parentId == null) {
+                        throw new IllegalStateException("Không tìm thấy câu gốc theo mã: " + baseCode);
+                    }
+                    int max = questionRepository.findMaxCloneIndexByParentId(parentId);
+                    int idx = (desiredIdx == null) ? (max + 1) : desiredIdx;
+
+                    if (desiredIdx != null) {
+                        while (questionRepository.existsBySubjectIdAndQuestionCodeIgnoreCase(
+                                subjectId, "C" + idx + "." + baseCode)) {
+                            idx++;
+                        }
+                    }
+
+                    String finalCode = "C" + idx + "." + baseCode;
+                    questionService.convertToClone(qId, parentId, idx, finalCode);
+                }
+
+                // meta
+                questionMetaService.upsertDefault(
                         qId, UnitKind.FULL_QUESTION, DEFAULT_POINTS,
                         dto.getChapter(), null, RecordStatus.DRAFT,
                         null, typeCode
@@ -425,7 +493,6 @@ public class ImportQuestionService {
                 if (temp != null && temp.key() != null && !temp.key().isBlank()) {
                     String originalName = (temp.originalName() == null ? "import.bin" : temp.originalName());
                     String finalKey = "archives/" + UUID.randomUUID() + "_" + originalName;
-
                     gcsObjectHelper.copyAndDelete(temp.key(), finalKey);
 
                     Map<String, Object> meta = new HashMap<>();
@@ -438,8 +505,8 @@ public class ImportQuestionService {
                     fileArchiveService.saveExistingByKey(
                             "IMPORT", subjectId, userId, originalName, temp.contentType(), finalKey, meta
                     );
-
-                    previewStore.clearTempUpload(req.sessionId);}
+                    previewStore.clearTempUpload(req.sessionId);
+                }
             } catch (Exception ignore) {}
         }
 
@@ -496,20 +563,30 @@ public class ImportQuestionService {
         return P_DOC_HEADER_HINT.matcher(head.toString()).find();
     }
 
+    // ImportQuestionService.java
     private PreviewBlock parseOneBlockForPreview(String rawBlock, List<byte[]> allImages) {
         PreviewBlock b = new PreviewBlock();
 
+        // NEW: đọc mã khai báo + set previewCode
+        String declared = extractDeclaredCode(rawBlock);
+        if (declared != null && !declared.isBlank()) {
+            b.previewCode = declared.trim();
+        }
+
+        // NEW: loại bỏ "(Mã: ...)" khỏi block để phần còn lại không rơi vào content
+        String work = stripCodeDeclaration(rawBlock);
+
         // A) Đọc điểm từ header để set Difficulty
         Integer pts = null;
-        Matcher headPt = P_HEADER_POINTS.matcher(rawBlock);
+        Matcher headPt = P_HEADER_POINTS.matcher(work);
         if (headPt.find()) {
             String g = headPt.group(1);
             if (g != null) try { pts = Integer.parseInt(g); } catch (Exception ignore) {}
         }
 
         // B) cắt nhãn Answer (chưa phân loại)
-        Matcher ansM = P_ANSWER_LABEL.matcher(rawBlock);
-        String block = rawBlock;
+        Matcher ansM = P_ANSWER_LABEL.matcher(work);
+        String block = work;
         String pendingAnswer = null;
         if (ansM.find()) {
             pendingAnswer = beautifyMath(sanitizeText(stripInlineMarkers(ansM.group(2).trim())));
@@ -531,7 +608,7 @@ public class ImportQuestionService {
         boolean isMC = (keys.size() == 4);
 
         b.questionType = isMC ? QuestionType.MULTIPLE_CHOICE : QuestionType.ESSAY;
-        b.difficulty = mapPoints(pts); // đặt theo điểm (mặc định C nếu null)
+        b.difficulty = mapPoints(pts); // mặc định C nếu null
 
         // E) gán Answer đúng field
         if (pendingAnswer != null) {
@@ -575,10 +652,9 @@ public class ImportQuestionService {
             b.content = beautifyMath(sanitizeText(cont));
             if (b.answerText == null) b.answerText = "";
             else b.answerText = beautifyMath(sanitizeText(enforceInlineListBreaks(collapseSoftBreaks(b.answerText))));
-
         }
 
-        // Ảnh → imageIndexes (từ body sau khi đã gắn placeholder ở PDF)
+        // Ảnh
         Matcher imgM = P_IMAGE_PLACEHOLDER.matcher(body);
         while (imgM.find()) {
             int idx = safeIndex(imgM.group(1));

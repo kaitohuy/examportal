@@ -1,4 +1,9 @@
+// com.exam.examserver.model.Notification.java
 package com.exam.examserver.model;
+
+import com.exam.examserver.enums.AppArea;
+import com.exam.examserver.enums.NotificationAction;
+import com.exam.examserver.enums.NotificationTargetType;
 import jakarta.persistence.*;
 import org.hibernate.annotations.CreationTimestamp;
 
@@ -9,7 +14,11 @@ import java.time.Instant;
         indexes = {
                 @Index(name="idx_notif_user_created", columnList = "userId,createdAt"),
                 @Index(name="idx_notif_user_read",    columnList = "userId,readAt"),
-                @Index(name="idx_notif_expires_at",   columnList = "expiresAt")
+                @Index(name="idx_notif_expires_at",   columnList = "expiresAt"),
+                // thêm index giúp list nhanh theo unread mới
+                @Index(name="idx_notif_user_isread_created", columnList = "userId,isRead,createdAt"),
+                // (optional) hỗ trợ tra cứu theo resource đích
+                @Index(name="idx_notif_target", columnList = "targetType,targetId")
         })
 public class Notification {
 
@@ -20,83 +29,83 @@ public class Notification {
     private Long userId;
 
     @Column(nullable = false, length = 120)
-    private String title;      // "File được duyệt", "File bị từ chối", ...
+    private String title;
 
     @Column(columnDefinition = "text")
-    private String message;    // nội dung hiển thị (tên file, hạn, lý do ...)
+    private String message;
 
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
-    private Instant readAt;    // null = chưa đọc
+    private Instant readAt;             // null = chưa đọc
 
+    // GIỮ NGUYÊN để không breaking code cũ
     @Column(nullable = true)
     private boolean isRead = false;
 
-    private Instant expiresAt; // null = không hết hạn
+    private Instant expiresAt;          // null = không hết hạn
 
-    public boolean getIsRead() {
-        return isRead;
-    }
+    // ---- PHẦN HYBRID LINK ----
+    @Enumerated(EnumType.STRING)
+    @Column(length = 50)
+    private NotificationAction action;          // ví dụ FILE_APPROVED
 
-    public void setIsRead(boolean read) {
-        isRead = read;
-    }
+    @Enumerated(EnumType.STRING)
+    @Column(length = 50)
+    private NotificationTargetType targetType;  // ví dụ FILE_ARCHIVE
 
-    public Long getId() {
-        return id;
-    }
+    private Long targetId;                       // ví dụ 42
 
-    public void setId(Long id) {
-        this.id = id;
-    }
+    @Column(columnDefinition = "text")
+    private String payload;                      // JSON string (tab, extra...)
 
-    public Long getUserId() {
-        return userId;
-    }
+    @Column(length = 512)
+    private String targetUrl;                    // path nội bộ, nếu muốn cấp sẵn
 
-    public void setUserId(Long userId) {
-        this.userId = userId;
-    }
+    @Enumerated(EnumType.STRING)
+    @Column(length = 30)
+    private AppArea appArea;                     // ADMIN / TEACHER / STUDENT
 
-    public String getTitle() {
-        return title;
-    }
+    // --- getters/setters (nếu bạn dùng Lombok thì @Getter/@Setter là đủ) ---
 
-    public void setTitle(String title) {
-        this.title = title;
-    }
+    public Long getId() { return id; }
+    public Long getUserId() { return userId; }
+    public void setUserId(Long userId) { this.userId = userId; }
 
-    public String getMessage() {
-        return message;
-    }
+    public String getTitle() { return title; }
+    public void setTitle(String title) { this.title = title; }
 
-    public void setMessage(String message) {
-        this.message = message;
-    }
+    public String getMessage() { return message; }
+    public void setMessage(String message) { this.message = message; }
 
-    public Instant getCreatedAt() {
-        return createdAt;
-    }
+    public Instant getCreatedAt() { return createdAt; }
 
-    public void setCreatedAt(Instant createdAt) {
-        this.createdAt = createdAt;
-    }
+    public Instant getReadAt() { return readAt; }
+    public void setReadAt(Instant readAt) { this.readAt = readAt; }
 
-    public Instant getReadAt() {
-        return readAt;
-    }
+    // lưu ý: bạn đang gọi getIsRead() trong Service => giữ nguyên tên này
+    public boolean getIsRead() { return isRead; }
+    public void setIsRead(boolean read) { isRead = read; }
 
-    public void setReadAt(Instant readAt) {
-        this.readAt = readAt;
-    }
+    public Instant getExpiresAt() { return expiresAt; }
+    public void setExpiresAt(Instant expiresAt) { this.expiresAt = expiresAt; }
 
-    public Instant getExpiresAt() {
-        return expiresAt;
-    }
+    public NotificationAction getAction() { return action; }
+    public void setAction(NotificationAction action) { this.action = action; }
 
-    public void setExpiresAt(Instant expiresAt) {
-        this.expiresAt = expiresAt;
-    }
+    public NotificationTargetType getTargetType() { return targetType; }
+    public void setTargetType(NotificationTargetType targetType) { this.targetType = targetType; }
+
+    public Long getTargetId() { return targetId; }
+    public void setTargetId(Long targetId) { this.targetId = targetId; }
+
+    public String getPayload() { return payload; }
+    public void setPayload(String payload) { this.payload = payload; }
+
+    public String getTargetUrl() { return targetUrl; }
+    public void setTargetUrl(String targetUrl) { this.targetUrl = targetUrl; }
+
+    public AppArea getAppArea() { return appArea; }
+    public void setAppArea(AppArea appArea) { this.appArea = appArea; }
 }

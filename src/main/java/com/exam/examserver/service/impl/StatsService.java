@@ -632,17 +632,17 @@ public class StatsService {
     // =====================================================================
 
     private long countQuestions(LocalDateTime from, LocalDateTime to) {
-        if (from == null && to == null) return questionRepo.count();
-        if (from != null && to != null) return questionRepo.countByCreatedAtBetween(from, to);
-        if (from != null) return questionRepo.countByCreatedAtGreaterThanEqual(from);
-        return questionRepo.countByCreatedAtLessThan(to);
+        if (from == null && to == null) return questionRepo.countByIsDeletedFalse();
+        if (from != null && to != null) return questionRepo.countByIsDeletedFalseAndCreatedAtBetween(from, to);
+        if (from != null) return questionRepo.countByIsDeletedFalseAndCreatedAtGreaterThanEqual(from);
+        return questionRepo.countByIsDeletedFalseAndCreatedAtLessThan(to);
     }
 
     private long countQuestionsByDifficulty(Difficulty d, LocalDateTime from, LocalDateTime to) {
-        if (from == null && to == null) return questionRepo.countByDifficulty(d);
-        if (from != null && to != null) return questionRepo.countByDifficultyAndCreatedAtBetween(d, from, to);
-        if (from != null) return questionRepo.countByDifficultyAndCreatedAtGreaterThanEqual(d, from);
-        return questionRepo.countByDifficultyAndCreatedAtLessThan(d, to);
+        if (from == null && to == null) return questionRepo.countByIsDeletedFalseAndDifficulty(d);
+        if (from != null && to != null) return questionRepo.countByIsDeletedFalseAndDifficultyAndCreatedAtBetween(d, from, to);
+        if (from != null) return questionRepo.countByIsDeletedFalseAndDifficultyAndCreatedAtGreaterThanEqual(d, from);
+        return questionRepo.countByIsDeletedFalseAndDifficultyAndCreatedAtLessThan(d, to);
     }
 
     private Map<String, Long> groupQuestionsByType(LocalDateTime from, LocalDateTime to) {

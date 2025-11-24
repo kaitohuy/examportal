@@ -45,6 +45,8 @@ public class QuestionServiceImpl implements QuestionService {
     private final BundleItemRepository bundleItemRepo;
     private final QuestionBundleRepository bundleRepo;
     private final QuestionIssueRepository issueRepo;
+    private final QuestionMetaRepository metaRepo;
+    private final QuestionFingerprintRepository fpRepo;
 
     @PersistenceContext
     private EntityManager em;
@@ -53,7 +55,7 @@ public class QuestionServiceImpl implements QuestionService {
                                SubjectRepository subjectRepo,
                                UserRepository userRepo,
                                QuestionMapper mapper,
-                               ImageStorageService imageStorageService, FingerprintService fingerprintService, QuestionImageRepository imageRepo, BundleItemRepository bundleItemRepo, QuestionBundleRepository bundleRepo, QuestionIssueRepository issueRepo) {
+                               ImageStorageService imageStorageService, FingerprintService fingerprintService, QuestionImageRepository imageRepo, BundleItemRepository bundleItemRepo, QuestionBundleRepository bundleRepo, QuestionIssueRepository issueRepo, QuestionMetaRepository metaRepo, QuestionFingerprintRepository fpRepo) {
         this.questionRepo = questionRepo;
         this.subjectRepo = subjectRepo;
         this.userRepo = userRepo;
@@ -64,26 +66,9 @@ public class QuestionServiceImpl implements QuestionService {
         this.bundleItemRepo = bundleItemRepo;
         this.bundleRepo = bundleRepo;
         this.issueRepo = issueRepo;
+        this.metaRepo = metaRepo;
+        this.fpRepo = fpRepo;
     }
-
-//    @Override
-//    public List<QuestionDTO> findByIds(List<Long> questionIds) {
-//        if (questionIds == null || questionIds.isEmpty()) return Collections.emptyList();
-//        List<Question> entities = questionRepo.findByIdIn(questionIds);
-//        Map<Long, Question> map = entities.stream()
-//                .collect(Collectors.toMap(Question::getId, q -> q));
-//        return questionIds.stream().map(map::get)
-//                .filter(Objects::nonNull)
-//                .map(mapper::toDto)
-//                .collect(Collectors.toList());
-//    }
-//
-//    @Override
-//    public QuestionDTO getById(Long questionId) {
-//        Question q = questionRepo.findById(questionId)
-//                .orElseThrow(() -> new EntityNotFoundException("Question not found"));
-//        return mapper.toDto(q);
-//    }
 
     @Override
     public List<QuestionDTO> findByIds(List<Long> questionIds) {
@@ -283,50 +268,6 @@ public class QuestionServiceImpl implements QuestionService {
         }
     }
 
-//    @Override
-//    public void delete(Long questionId) {
-//        Question q = questionRepo.findById(questionId)
-//                .orElseThrow(() -> new EntityNotFoundException("Question not found"));
-//
-//        List<Long> affectedBundleIds = bundleItemRepo.findBundleIdsByQuestionId(questionId);
-//        Long subjectId = q.getSubject().getId();
-//
-//        Set<String> urls = new LinkedHashSet<>();
-//        if (q.getImageUrl() != null && !q.getImageUrl().isEmpty()) urls.add(q.getImageUrl());
-//        if (q.getImages() != null) {
-//            for (QuestionImage img : q.getImages()) {
-//                if (img.getUrl() != null && !img.getUrl().isEmpty()) urls.add(img.getUrl());
-//            }
-//        }
-//        for (String url : urls) {
-//            try { imageStorageService.deleteImage(url); } catch (Exception ignored) {}
-//        }
-//
-//        questionRepo.delete(q);
-//        fingerprintService.remove(questionId);
-//
-//        if (affectedBundleIds != null && !affectedBundleIds.isEmpty()) {
-//            for (Long bid : affectedBundleIds) {
-//                // nếu bundle trống → xoá cả bundle và FP bundle
-//                if (bundleItemRepo.countByBundleId(bid) == 0) {
-//                    bundleRepo.deleteById(bid);
-//                    fingerprintService.removeBundle(bid);
-//                    continue;
-//                }
-//
-//                // ngược lại: rebuild fingerprint cho bundle
-//                String stem = bundleRepo.findInstructionsById(bid);           // đã thêm query
-//                List<Long> qids = bundleRepo.findQuestionIdsInBundle(bid);
-//                // lấy nội dung các câu để ghép parts
-//                List<Question> qs = questionRepo.findByIdIn(qids);
-//                // parts = content của từng question (hoặc tuỳ logic của bạn)
-//                List<String> parts = qs.stream().map(Question::getContent).toList();
-//
-//                fingerprintService.rebuildBundleFP(bid, subjectId, stem, parts);
-//            }
-//        }
-//    }
-
     @Override
     public void delete(Long questionId) {
         Question q = questionRepo.findById(questionId)
@@ -399,42 +340,106 @@ public class QuestionServiceImpl implements QuestionService {
         }
     }
 
-    // NEW: xoá cứng (dùng cho job dọn thùng rác / admin)
     @Override
+    @Transactional
     public void purge(Long questionId) {
-        Question q = questionRepo.findById(questionId)
-                .orElseThrow(() -> new EntityNotFoundException("Question not found"));
-
-        // xóa ảnh vật lý
-        Set<String> urls = new LinkedHashSet<>();
-        if (q.getImageUrl() != null && !q.getImageUrl().isEmpty()) urls.add(q.getImageUrl());
-        if (q.getImages() != null) {
-            for (QuestionImage img : q.getImages()) {
-                if (img.getUrl() != null && !img.getUrl().isEmpty()) urls.add(img.getUrl());
-            }
-        }
-        for (String url : urls) {
-            try { imageStorageService.deleteImage(url); } catch (Exception ignored) {}
-        }
-
-        // xóa DB
-        questionRepo.delete(q);
-        fingerprintService.remove(questionId);
-
-        // Rebuild FP cho bundle liên quan
+        // LẤY trước các bundle bị ảnh hưởng (active) để lát nữa rebuild FP
         List<Long> affectedBundleIds = bundleItemRepo.findBundleIdsByQuestionId(questionId);
+
+        // Xóa file ảnh vật lý (nên làm best-effort)
+        questionRepo.findById(questionId).ifPresent(q -> {
+            Set<String> urls = new LinkedHashSet<>();
+            if (q.getImageUrl() != null && !q.getImageUrl().isBlank()) urls.add(q.getImageUrl());
+            if (q.getImages() != null) {
+                for (QuestionImage img : q.getImages())
+                    if (img.getUrl() != null && !img.getUrl().isBlank()) urls.add(img.getUrl());
+            }
+            for (String u : urls) try { imageStorageService.deleteImage(u); } catch (Exception ignored) {}
+        });
+
+        // HARD DELETE theo đúng thứ tự
+        hardDeleteQuestionsCascade(List.of(questionId));
+
+        // Rebuild FP cho các bundle còn lại
         if (affectedBundleIds != null && !affectedBundleIds.isEmpty()) {
-            Long subjectId = q.getSubject().getId();
             for (Long bid : affectedBundleIds) {
                 String stem = bundleRepo.findInstructionsById(bid);
-                List<Long> rawQids = bundleRepo.findActiveQuestionIdsInBundle (bid);
-                List<Question> activeQs = questionRepo.findByIdIn(rawQids);
-                List<String> parts = activeQs.stream().map(Question::getContent).toList();
+                // Lấy subjectId của bundle 1 lần, dùng cho mọi trường hợp
+                Long subjectId = bundleRepo.findSubjectIdById(bid);
+
+                List<Long> qidsActive = bundleRepo.findActiveQuestionIdsInBundle(bid);
+                if (qidsActive.isEmpty()) {
+                    // bundle rỗng -> vẫn truyền subjectId của bundle
+                    fingerprintService.rebuildBundleFP(bid, subjectId, stem, List.of());
+                    continue;
+                }
+
+                // bundle còn câu -> rebuild theo danh sách câu hiện hành
+                List<Question> qs = questionRepo.findByIdIn(qidsActive);
+                List<String> parts = qs.stream().map(Question::getContent).toList();
                 fingerprintService.rebuildBundleFP(bid, subjectId, stem, parts);
             }
         }
     }
 
+    @Transactional
+    public int purgeAll(Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) return 0;
+
+        // 1. Thu thập bundle ảnh hưởng
+        Set<Long> affectedBundles = new HashSet<>();
+        for (Long id : ids) {
+            List<Long> list = bundleItemRepo.findBundleIdsByQuestionId(id);
+            if (list != null && !list.isEmpty()) affectedBundles.addAll(list);
+        }
+
+        // 2. Hard delete questions & dependencies (bao gồm BundleItem)
+        int purged = hardDeleteQuestionsCascade(ids);
+
+        // 3. Xử lý các bundle bị ảnh hưởng
+        Set<Long> emptyBundles = new HashSet<>();
+
+        for (Long bid : affectedBundles) {
+            // Đếm số item còn lại trong bundle
+            Long itemCount = bundleItemRepo.countByBundleId(bid);
+
+            if (itemCount == 0) {
+                // Bundle rỗng → đánh dấu để xóa
+                emptyBundles.add(bid);
+            } else {
+                // Bundle còn câu → rebuild FP
+                String stem = bundleRepo.findInstructionsById(bid);
+                Long subjectId = bundleRepo.findSubjectIdById(bid);
+                List<Long> qidsActive = bundleRepo.findActiveQuestionIdsInBundle(bid);
+
+                if (subjectId != null && !qidsActive.isEmpty()) {
+                    List<Question> qs = questionRepo.findByIdIn(qidsActive);
+                    List<String> parts = qs.stream().map(Question::getContent).toList();
+                    fingerprintService.rebuildBundleFP(bid, subjectId, stem, parts);
+                }
+            }
+        }
+
+        // 4. Xóa bundle rỗng + FP của chúng
+        if (!emptyBundles.isEmpty()) {
+            System.out.println("[purgeAll] Deleting " + emptyBundles.size() + " empty bundles: " + emptyBundles);
+
+            // Xóa FP trước (nếu không có CASCADE)
+            try {
+                em.createQuery("DELETE FROM BundleFingerprint bf WHERE bf.bundleId IN :ids")
+                        .setParameter("ids", emptyBundles)
+                        .executeUpdate();
+            } catch (Exception e) {
+                System.err.println("[WARN] Failed to delete bundle fingerprints: " + e.getMessage());
+            }
+
+            // Xóa bundle
+            bundleRepo.deleteAllById(emptyBundles);
+        }
+
+        System.out.println("[purgeAll] purged=" + purged + ", deleted_bundles=" + emptyBundles.size());
+        return purged;
+    }
 
     @Override
     public void addImages(Long questionId, List<String> imageUrls) {
@@ -453,17 +458,6 @@ public class QuestionServiceImpl implements QuestionService {
         if (q.getImageUrl() == null) q.setImageUrl(imageUrls.get(0));
         questionRepo.save(q);
     }
-
-    // ===== Clone APIs =====
-
-//    @Override
-//    public List<QuestionDTO> getClones(Long questionId) {
-//        Question parent = questionRepo.findById(questionId)
-//                .orElseThrow(() -> new EntityNotFoundException("Question not found"));
-//        Long rootId = (parent.getParent() == null ? parent.getId() : parent.getParent().getId());
-//        return questionRepo.findClonesByParentId(rootId)
-//                .stream().map(mapper::toDto).collect(Collectors.toList());
-//    }
 
     @Override
     public List<QuestionDTO> cloneQuestion(Long subjectId, Long questionId, Long creatorUserId, CloneRequest req) {
@@ -515,7 +509,24 @@ public class QuestionServiceImpl implements QuestionService {
 
             // metadata clone
             clone.setParent(source);
-            clone.setCloneIndex(start + i);
+            int idx = start + i;
+            clone.setCloneIndex(idx);
+
+            // === GÁN QUESTION CODE THEO MẪU C<idx>.<base> ===
+            String base = Optional.ofNullable(source.getQuestionCode()).orElse("").trim();
+            if (!base.isEmpty()) {
+                String seed = "C" + idx + "." + base;   // vd: C3.NH1.11.b)
+                String candidate = seed;
+
+                // Phòng va chạm trong cùng subject (do có thể có một câu khác trùng hệt)
+                // -> chỉ khi va chạm mới gắn hậu tố -1, -2...
+                int bump = 0;
+                while (questionRepo.existsBySubjectIdAndQuestionCodeIgnoreCaseAndIsDeletedFalse(subjectId, candidate)) {
+                    bump++;
+                    candidate = seed + "-" + bump;      // C3.NH1.11.b)-1, ...
+                }
+                clone.setQuestionCode(candidate);
+            }
 
             // copy gallery (re-use URL) nếu yêu cầu
             if (Boolean.TRUE.equals(req.getCopyImages()) && source.getImages() != null) {
@@ -558,95 +569,6 @@ public class QuestionServiceImpl implements QuestionService {
         return page.map(mapper::toDto);
     }
 
-    //OLD METHOD
-//    @Override
-//    public Page<QuestionDTO> pageBySubject(Long subjectId, QuestionFilter f, Pageable pageable) {
-//        subjectRepo.findById(subjectId)
-//                .orElseThrow(() -> new EntityNotFoundException("Subject not found"));
-//
-//        Specification<Question> spec = Specification.allOf(
-//                QuestionSpecs.subjectId(subjectId),
-//                QuestionSpecs.isRootOnly(),
-//                QuestionSpecs.hasAnyLabel(f.getLabels()),
-//                QuestionSpecs.difficulty(f.getDifficulty()),
-//                QuestionSpecs.chapter(f.getChapter()),
-//                QuestionSpecs.type(f.getType()),
-//                QuestionSpecs.createdByContains(f.getCreatedBy()),
-//                QuestionSpecs.createdBetween(f.getFrom(), f.getTo()),
-//                QuestionSpecs.fullText(f.getQ()),
-//                QuestionSpecs.flagged(f.getFlagged())
-//        );
-//
-//        Page<Question> page = questionRepo.findAll(spec, pageable);
-//        Page<QuestionDTO> pageDto = page.map(mapper::toDto);
-//
-//// gắn cờ flagged theo batch
-//        List<Long> ids = pageDto.getContent().stream().map(QuestionDTO::getId).toList();
-//        if (!ids.isEmpty()) {
-//            var openIssues = issueRepo.findByQuestionIdInAndStatus(ids, IssueStatus.OPEN);
-//            var flaggedSet = openIssues.stream().map(ii -> ii.getQuestion().getId()).collect(Collectors.toSet());
-//            pageDto.getContent().forEach(dto -> dto.setFlagged(flaggedSet.contains(dto.getId())));
-//        }
-//
-//        return pageDto;
-//
-//    }
-//
-//    @Override
-//    public List<Long> findIdsByFilter(Long subjectId, QuestionFilter f) {
-//        Specification<Question> spec = Specification.allOf(
-//                QuestionSpecs.subjectId(subjectId),
-//                QuestionSpecs.isRootOnly(),
-//                QuestionSpecs.hasAnyLabel(f.getLabels()),
-//                QuestionSpecs.difficulty(f.getDifficulty()),
-//                QuestionSpecs.chapter(f.getChapter()),
-//                QuestionSpecs.type(f.getType()),
-//                QuestionSpecs.createdByContains(f.getCreatedBy()),
-//                QuestionSpecs.createdBetween(f.getFrom(), f.getTo()),
-//                QuestionSpecs.fullText(f.getQ()),
-//                QuestionSpecs.flagged(f.getFlagged())
-//        );
-//
-//        // KHÔNG truyền sort/pageable để tránh ORDER BY trên DISTINCT (Postgres 42P10)
-//        return questionRepo.findAll(spec).stream()
-//                .map(Question::getId)
-//                .distinct() // phòng trường hợp join labels sinh duplicate
-//                .toList();
-//    }
-//
-////    @Override
-////    @Transactional
-////    public int deleteAllByIds(List<Long> ids) {
-////        if (ids == null || ids.isEmpty()) return 0;
-////        questionRepo.deleteAllByIdInBatch(ids);
-////        return ids.size();
-////    }
-//
-//    @Override
-//    @Transactional
-//    public int deleteAllByIds(List<Long> ids) {
-//        if (ids == null || ids.isEmpty()) return 0;
-//        int ok = 0;
-//        for (Long id : ids) {
-//            delete(id); // dùng hàm delete đã viết ở trên
-//            ok++;
-//        }
-//        return ok;
-//    }
-//    @Override
-//    public void updateQuestionCode(Long questionId, String code) {
-//        Question q = questionRepo.findById(questionId)
-//                .orElseThrow(() -> new EntityNotFoundException("Question not found"));
-//        q.setQuestionCode(code);
-//        questionRepo.save(q);
-//    }
-//
-//    @Override
-//    public boolean codeExists(Long subjectId, String code) {
-//        return (code != null && !code.isBlank())
-//                && questionRepo.existsBySubjectIdAndQuestionCode(subjectId, code);
-//    }
-
     @Override
     public Page<QuestionDTO> pageBySubject(Long subjectId, QuestionFilter f, Pageable pageable) {
         subjectRepo.findById(subjectId)
@@ -684,7 +606,10 @@ public class QuestionServiceImpl implements QuestionService {
         Specification<Question> spec = Specification.allOf(
                 QuestionSpecs.subjectId(subjectId),
                 QuestionSpecs.isRootOnly(),
-                QuestionSpecs.notDeleted(),                      // NEW: lọc thùng rác
+                // ← THÊM LOGIC NÀY
+                (f.getDeletedOnly() != null && f.getDeletedOnly())
+                        ? QuestionSpecs.deletedOnly()
+                        : QuestionSpecs.notDeleted(),
                 QuestionSpecs.hasAnyLabel(f.getLabels()),
                 QuestionSpecs.difficulty(f.getDifficulty()),
                 QuestionSpecs.chapter(f.getChapter()),
@@ -735,7 +660,7 @@ public class QuestionServiceImpl implements QuestionService {
 
         Specification<Question> spec = Specification.allOf(
                 QuestionSpecs.subjectId(subjectId),
-                QuestionSpecs.isRootOnly(),
+//                QuestionSpecs.isRootOnly(),
                 QuestionSpecs.deletedOnly(),                 // LƯU Ý: khác pageBySubject()
                 QuestionSpecs.hasAnyLabel(f.getLabels()),
                 QuestionSpecs.difficulty(f.getDifficulty()),
@@ -752,4 +677,111 @@ public class QuestionServiceImpl implements QuestionService {
         // (Không cần gắn cờ flagged trong thùng rác — tuỳ bạn, có thể giữ nếu muốn)
         return pageDto;
     }
+
+    private Set<Long> expandWithAllDescendants(Collection<Long> roots) {
+        Set<Long> all = new LinkedHashSet<>(roots);
+        Deque<Long> dq = new ArrayDeque<>(roots);
+        while (!dq.isEmpty()) {
+            Long p = dq.pollFirst();
+            List<Long> children = questionRepo.findChildIds(List.of(p));
+            for (Long c : children) if (all.add(c)) dq.addLast(c);
+        }
+        return all;
+    }
+
+    @Transactional
+    protected int hardDeleteQuestionsCascade(Collection<Long> rootIds) {
+        if (rootIds == null || rootIds.isEmpty()) return 0;
+
+        // 1) Gom tất cả id (bao gồm clone con nhiều tầng) & xoá con trước cha
+        Set<Long> allIds = expandWithAllDescendants(rootIds);
+
+        // 2) DỌN PHỤ THUỘC (hard delete)
+        // 2.1 quiz_question (nếu có Repo, bạn có thể gọi ở đây) — bỏ qua nếu không dùng
+        // quizQuestionRepo.deleteByQuestionIdIn(allIds);
+
+        // 2.2 bundle_item → BẮT BUỘC xoá để gỡ FK question_id
+        bundleItemRepo.hardDeleteByQuestionIds(allIds);
+
+        // 2.3 question_labels (element collection)
+        try { questionRepo.deleteLabelsByQuestionIds(allIds); } catch (Exception ignore) {}
+
+        // 2.4 question_image (gallery)
+        imageRepo.deleteByQuestionIdIn(allIds);
+
+        // 2.5 question_issue (1-1)
+        issueRepo.deleteByQuestionIdIn(allIds);
+
+        // 2.6 question_meta + question_fingerprint (1-1; PK = question_id)
+        metaRepo.deleteAllByIdInBatch(allIds);
+        fpRepo.deleteAllByIdInBatch(allIds);
+
+        // 3) XÓA CHÍNH QUESTION
+        return questionRepo.deleteByIdIn(allIds);
+    }
+
+    @Override
+    public List<Long> findIdsByCodes(List<String> codes) {
+        if (codes == null || codes.isEmpty()) return List.of();
+        return questionRepo.findAllByQuestionCodeIn(codes)
+                .stream()
+                .map(Question::getId)
+                .toList();
+    }
+
+    @Override
+    public Map<String, Long> findIdMapByCodes(Collection<String> codes) {
+        if (codes == null || codes.isEmpty()) return Map.of();
+
+        List<String> lower = codes.stream()
+                .filter(Objects::nonNull)
+                .map(s -> s.trim().toLowerCase(Locale.ROOT))  // chỉ lowercase + trim
+                .filter(s -> !s.isEmpty())
+                .distinct()
+                .toList();
+
+        var questions = questionRepo.findAllByQuestionCodeLowerIn(lower);
+
+        Map<String, Long> map = new HashMap<>();
+        for (var q : questions) {
+            String key = Optional.ofNullable(q.getQuestionCode())
+                    .orElse("")
+                    .trim()
+                    .toLowerCase(Locale.ROOT);
+            if (!key.isEmpty()) map.putIfAbsent(key, q.getId());
+        }
+        return map;
+    }
+
+    @Override
+    public Optional<Long> findParentIdByCode(Long subjectId, String baseCode) {
+        if (subjectId == null || baseCode == null || baseCode.isBlank()) return Optional.empty();
+        return questionRepo.findBySubjectIdAndQuestionCodeIgnoreCase(subjectId, baseCode.trim())
+                .map(Question::getId);
+    }
+
+    @Override
+    @Transactional
+    public void convertToClone(Long questionId, Long parentId, int cloneIndex, String finalCode) {
+        Question q = questionRepo.findById(questionId)
+                .orElseThrow(() -> new EntityNotFoundException("Question not found"));
+        Question parent = questionRepo.findById(parentId)
+                .orElseThrow(() -> new EntityNotFoundException("Parent not found"));
+
+        if (parent.getParent() != null)
+            throw new IllegalArgumentException("Parent must be a root question");
+
+        if (!Objects.equals(q.getSubject().getId(), parent.getSubject().getId()))
+            throw new IllegalArgumentException("Subject mismatch between clone and parent");
+
+        // đảm bảo code duy nhất trong môn
+        if (questionRepo.existsBySubjectIdAndQuestionCodeIgnoreCase(parent.getSubject().getId(), finalCode))
+            throw new IllegalStateException("Question code already exists: " + finalCode);
+
+        q.setParent(parent);
+        q.setCloneIndex(cloneIndex);
+        q.setQuestionCode(finalCode);
+        questionRepo.save(q);
+    }
+
 }

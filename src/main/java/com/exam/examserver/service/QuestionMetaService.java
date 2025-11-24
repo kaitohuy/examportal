@@ -9,6 +9,7 @@ import com.exam.examserver.model.exam.QuestionMeta;
 
 import java.math.BigDecimal;
 import java.util.Collection;
+import java.util.List;
 
 public interface QuestionMetaService {
     // overload mới
@@ -35,4 +36,6 @@ public interface QuestionMetaService {
     }
 
     void markUsed(Collection<Long> questionIds);
+
+    List<String> findDistinctTypeCodesApproved(Long subjectId);
 }

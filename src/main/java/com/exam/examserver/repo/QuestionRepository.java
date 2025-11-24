@@ -11,6 +11,7 @@ import org.springframework.data.repository.query.Param;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 public interface QuestionRepository extends JpaRepository<Question, Long>, JpaSpecificationExecutor<Question> {
 
@@ -70,6 +71,17 @@ public interface QuestionRepository extends JpaRepository<Question, Long>, JpaSp
     long countByDifficultyAndCreatedAtBetween(Difficulty difficulty, LocalDateTime from, LocalDateTime to);
     long countByDifficultyAndCreatedAtGreaterThanEqual(Difficulty difficulty, LocalDateTime from);
     long countByDifficultyAndCreatedAtLessThan(Difficulty difficulty, LocalDateTime to);
+
+    long countByIsDeletedFalse();
+
+    long countByIsDeletedFalseAndCreatedAtBetween(LocalDateTime from, LocalDateTime to);
+    long countByIsDeletedFalseAndCreatedAtGreaterThanEqual(LocalDateTime from);
+    long countByIsDeletedFalseAndCreatedAtLessThan(LocalDateTime to);
+
+    long countByIsDeletedFalseAndDifficulty(Difficulty difficulty);
+    long countByIsDeletedFalseAndDifficultyAndCreatedAtBetween(Difficulty difficulty, LocalDateTime from, LocalDateTime to);
+    long countByIsDeletedFalseAndDifficultyAndCreatedAtGreaterThanEqual(Difficulty difficulty, LocalDateTime from);
+    long countByIsDeletedFalseAndDifficultyAndCreatedAtLessThan(Difficulty difficulty, LocalDateTime to);
 
     @Query("select count(q) from Question q join q.labels l where l = :label")
     long countByLabel(@Param("label") QuestionLabel label);
@@ -145,4 +157,35 @@ public interface QuestionRepository extends JpaRepository<Question, Long>, JpaSp
                                                @Param("chapter") Integer chapter,
                                                @Param("labels") Collection<QuestionLabel> labels,
                                                @Param("labelsEmpty") boolean labelsEmpty);
+
+    /** Id các câu đang ở thùng rác và thuộc subject cho phép purge. */
+    @Query("""
+        select q.id from Question q
+        where q.subject.id = :subjectId and q.isDeleted = true and q.id in :ids
+    """)
+    List<Long> findTrashIdsOfSubject(@Param("subjectId") Long subjectId, @Param("ids") Collection<Long> ids);
+
+    /** Lấy id các clone 1 bậc (child) của danh sách parentIds. */
+    @Query("select q.id from Question q where q.parent.id in :parentIds")
+    List<Long> findChildIds(@Param("parentIds") Collection<Long> parentIds);
+
+    /** Xoá theo batch (JPQL) – trả về số bản ghi. */
+    @Modifying
+    @Query("delete from Question q where q.id in :ids")
+    int deleteByIdIn(@Param("ids") Collection<Long> ids);
+
+    @Modifying
+    @Query(value = "delete from question_labels where question_id in (:ids)", nativeQuery = true)
+    void deleteLabelsByQuestionIds(@Param("ids") Collection<Long> ids);
+
+    List<Question> findAllByQuestionCodeIn(Collection<String> codes);
+
+    @Query("""
+       select q from Question q
+       where q.isDeleted = false
+         and lower(q.questionCode) in :codesLower
+    """)
+    List<Question> findAllByQuestionCodeLowerIn(@Param("codesLower") Collection<String> codesLower);
+
+    Optional<Question> findBySubjectIdAndQuestionCodeIgnoreCase(Long subjectId, String questionCode);
 }

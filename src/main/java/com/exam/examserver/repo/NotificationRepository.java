@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.*;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.Optional;
 
 public interface NotificationRepository extends JpaRepository<Notification, Long> {
 
@@ -50,5 +51,6 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
     @Query("delete from Notification n where n.id = :id and n.userId = :uid")
     int deleteOne(@Param("uid") Long userId, @Param("id") Long id);
 
+    Optional<Notification> findByIdAndUserId(Long id, Long userId);
 }
 

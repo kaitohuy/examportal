@@ -4,6 +4,7 @@ package com.exam.examserver.controller;
 import com.exam.examserver.dto.autogen.*;
 import com.exam.examserver.model.exam.Subject;
 import com.exam.examserver.model.user.CustomUserDetails;
+import com.exam.examserver.repo.QuestionRepository;
 import com.exam.examserver.service.SubjectService;
 import com.exam.examserver.service.auto.AutoPaperService;
 import com.exam.examserver.service.import_export.ExportQuestionService;
@@ -27,15 +28,19 @@ public class AutoGenController {
     private final AutoPaperService autoService;
     private final ExportQuestionService exportService;
     private final SubjectService subjectService;
+    private final FileArchiveService fileArchiveService;
+    private final QuestionRepository questionRepo;
     private final ObjectMapper om = new ObjectMapper();
 
     public AutoGenController(AutoPaperService autoService,
                              ExportQuestionService exportService,
-                             SubjectService subjectService
-                             ) {
+                             SubjectService subjectService, FileArchiveService fileArchiveService, QuestionRepository questionRepo
+    ) {
         this.autoService = autoService;
         this.exportService = exportService;
         this.subjectService = subjectService;
+        this.fileArchiveService = fileArchiveService;
+        this.questionRepo = questionRepo;
     }
 
     // Xem ma trận pick (không ghi DB)
@@ -56,7 +61,9 @@ public class AutoGenController {
     @PostMapping("/export")
     public ResponseEntity<byte[]> exportZip(@PathVariable Long subjectId,
                                             @RequestBody(required = false) AutoGenRequest req,
-                                            @RequestParam(defaultValue = "true") boolean commit,
+                                            //@RequestParam(defaultValue = "true") boolean commit,
+                                            @RequestParam(defaultValue = "false") boolean commit,
+
                                             @RequestParam(defaultValue = "De_tu_dong") String fileName,
                                             // Header tuỳ chọn (có thể bỏ trống – dùng default)
                                             @RequestParam(required = false) String program,
@@ -72,9 +79,12 @@ public class AutoGenController {
         AutoGenRequest effective = (req == null) ? new AutoGenRequest() : req;
         if (effective.variants <= 0) effective.variants = 5;
 
-        AutoGenPreviewResponse resp = commit
-                ? autoService.commit(subjectId, effective)
-                : autoService.preview(subjectId, effective);
+//        AutoGenPreviewResponse resp = commit
+//                ? autoService.commit(subjectId, effective)
+//                : autoService.preview(subjectId, effective);
+
+        // Luôn dùng preview: không ghi usage ở giai đoạn export
+        AutoGenPreviewResponse resp = autoService.preview(subjectId, effective);
 
         // 2) Header cho đề thi (dùng thông tin môn)
         Subject subj = subjectService.getSubjectById(subjectId);
@@ -162,21 +172,36 @@ public class AutoGenController {
     }
 
     private String buildBlueprintJson(AutoGenPreviewResponse resp) throws Exception {
-        Map<String, Object> root = new java.util.LinkedHashMap<>();
+        Map<String, Object> root = new LinkedHashMap<>();
         int N = Math.max(0, resp.variants);
         int R = (resp.rows == null ? 0 : resp.rows.size());
 
         root.put("variants", N);
-        java.util.List<Map<String,Object>> rows = new java.util.ArrayList<>();
+        List<Map<String,Object>> rows = new ArrayList<>();
         for (int r = 0; r < R; r++) {
             var row = resp.rows.get(r);
-            java.util.List<java.util.List<Long>> cells = new java.util.ArrayList<>(N);
+            List<Map<String, Object>> cells = new ArrayList<>(N);
+
             for (int k = 0; k < N; k++) {
                 var cell = row.columns.get(k);
-                java.util.List<Long> ids = (cell == null || cell.questionIds == null) ? java.util.List.of() : cell.questionIds;
-                cells.add(ids);
+                List<Long> ids = (cell == null || cell.questionIds == null)
+                        ? List.of() : cell.questionIds;
+
+                // map id -> code (nếu Question có trường code; đổi getter cho đúng thực tế của bạn)
+                List<String> codes = ids.isEmpty()
+                        ? List.of()
+                        : questionRepo.findAllById(ids).stream()
+                        .map(q -> q.getQuestionCode()) // hoặc getCode()
+                        .filter(Objects::nonNull)
+                        .toList();
+
+                Map<String, Object> cellObj = new LinkedHashMap<>();
+                cellObj.put("ids", ids);
+                cellObj.put("codes", codes); // để rỗng nếu bạn chưa cần
+
+                cells.add(cellObj);
             }
-            java.util.Map<String,Object> rowObj = new java.util.LinkedHashMap<>();
+            Map<String,Object> rowObj = new LinkedHashMap<>();
             rowObj.put("cells", cells);
             rows.add(rowObj);
         }

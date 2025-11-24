@@ -3,6 +3,7 @@ package com.exam.examserver.repo;
 import com.exam.examserver.model.exam.BundleItem;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -13,9 +14,6 @@ import java.util.List;
 @Repository
 public interface BundleItemRepository extends JpaRepository<BundleItem, Long>, JpaSpecificationExecutor<BundleItem> {
 
-    // OLD (comment): lấy cả item đã xoá
-    // List<BundleItem> findByBundleIdOrderByOrderIndexAsc(Long bundleId);
-
     // NEW: chỉ item active
     @Query("""
        select bi from BundleItem bi
@@ -24,16 +22,12 @@ public interface BundleItemRepository extends JpaRepository<BundleItem, Long>, J
     """)
     List<BundleItem> findActiveByBundleIdOrderByOrderIndexAsc(@Param("bundleId") Long bundleId);
 
-    // OLD (comment): bundleIds theo question không xét soft-delete
-    // @Query("select distinct bi.bundle.id from BundleItem bi where bi.question.id = :qid")
-    // List<Long> findBundleIdsByQuestionId(@Param("qid") Long questionId);
-
     // NEW: chỉ tính các liên kết còn hoạt động
     @Query("select distinct bi.bundle.id from BundleItem bi where bi.question.id = :qid and bi.isDeleted = false")
     List<Long> findActiveBundleIdsByQuestionId(@Param("qid") Long questionId);
 
-    // OLD: đếm mọi item (có thể sai ngữ nghĩa với soft-delete nếu dùng để check bundle rỗng)
-    long countByBundleId(Long bundleId);
+    @Query("SELECT COUNT(bi) FROM BundleItem bi WHERE bi.bundle.id = :bundleId AND bi.isDeleted = false")
+    Long countByBundleId(@Param("bundleId") Long bundleId);
 
     // NEW: đếm item active (dùng khi cần kiểm tra bundle còn trống hay không)
     @Query("select count(bi) from BundleItem bi where bi.bundle.id = :bundleId and bi.isDeleted = false")
@@ -67,4 +61,11 @@ public interface BundleItemRepository extends JpaRepository<BundleItem, Long>, J
        order by bi.orderIndex asc
     """)
     List<Long> findActiveQuestionIdsInBundle(@Param("bundleId") Long bundleId);
+
+    /**
+     * HARD DELETE tất cả item (kể cả isDeleted=false/true) tham chiếu tới các questionId.
+     */
+    @Modifying
+    @Query("delete from BundleItem bi where bi.question.id in :qids")
+    void hardDeleteByQuestionIds(@Param("qids") Collection<Long> qids);
 }

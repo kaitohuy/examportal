@@ -130,7 +130,7 @@ public class QuestionController {
                                                  // NEW: PRACTICE có tùy chọn lưu
                                                  @RequestParam(defaultValue = "false") boolean saveCopy
     ) throws Exception {
-        List<Long> questionIds = resolveSelectionToIds(subjectId, sel);
+        List<Long> questionIds = resolveSelectionToIds(subjectId, sel, false);
         if (questionIds.isEmpty()) {
             return ResponseEntity.badRequest().body(null);
         }
@@ -229,7 +229,7 @@ public class QuestionController {
         return new ResponseEntity<>(data, headers, HttpStatus.OK);
     }
 
-    private List<Long> resolveSelectionToIds(Long subjectId, BulkSelectionRequest sel) {
+    private List<Long> resolveSelectionToIds(Long subjectId, BulkSelectionRequest sel, Boolean deleted) {
         if (sel == null || sel.getMode() == null)
             throw new IllegalArgumentException("Invalid selection");
 
@@ -237,15 +237,17 @@ public class QuestionController {
             case IDS: {
                 List<Long> raw = Optional.ofNullable(sel.getIds()).orElseGet(List::of);
                 if (raw.isEmpty()) return raw;
-                // Lọc ID thuộc đúng subject và là root (parent IS NULL) cho an toàn
+
+                // Lọc ID thuộc đúng subject và scope (deleted/active)
                 var filter = new QuestionFilter();
-                // (không set gì ngoài q/filter khác, chỉ cần scope subject + root)
+                filter.setDeletedOnly(deleted);  // ← SET THEO PARAMETER
                 List<Long> scoped = questionService.findIdsByFilter(subjectId, filter);
                 var scopedSet = new HashSet<>(scoped);
                 return raw.stream().filter(scopedSet::contains).toList();
             }
             case FILTER: {
                 QuestionFilter f = Optional.ofNullable(sel.getFilter()).orElseGet(QuestionFilter::new);
+                f.setDeletedOnly(deleted);  // ← OVERRIDE THEO PARAMETER
                 List<Long> allIds = questionService.findIdsByFilter(subjectId, f);
                 if (sel.getExcludeIds() != null && !sel.getExcludeIds().isEmpty()) {
                     var exclude = new HashSet<>(sel.getExcludeIds());
@@ -365,7 +367,7 @@ public class QuestionController {
     @PostMapping("/bulk-delete")
     public ResponseEntity<Map<String, Object>> bulkDelete(@PathVariable Long subjectId,
                                                           @RequestBody BulkSelectionRequest sel) {
-        List<Long> ids = resolveSelectionToIds(subjectId, sel);
+        List<Long> ids = resolveSelectionToIds(subjectId, sel, false);
         if (ids.isEmpty()) {
             return ResponseEntity.ok(Map.of("deleted", 0, "requested", 0));
         }
@@ -444,23 +446,38 @@ public class QuestionController {
         questionService.restore(questionId);
     }
 
-    @PostMapping("/bulk-restore")
-    public Map<String,Object> bulkRestore(@PathVariable Long subjectId, @RequestBody BulkSelectionRequest sel) {
-        var ids = resolveSelectionToIds(subjectId, sel);
-        int ok=0; for (Long id: ids) { questionService.restore(id); ok++; }
-        return Map.of("restored", ok, "requested", ids.size());
-    }
-
     @DeleteMapping("/{questionId}/purge")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void purge(@PathVariable Long subjectId, @PathVariable Long questionId) {
         questionService.purge(questionId);
     }
 
-    @PostMapping("/bulk-purge")
-    public Map<String,Object> bulkPurge(@PathVariable Long subjectId, @RequestBody BulkSelectionRequest sel) {
-        var ids = resolveSelectionToIds(subjectId, sel);
-        int ok=0; for (Long id: ids) { questionService.purge(id); ok++; }
-        return Map.of("purged", ok, "requested", ids.size());
+    @PostMapping("/bulk-restore")
+    public Map<String,Object> bulkRestore(
+            @PathVariable Long subjectId,
+            @RequestBody BulkSelectionRequest sel,
+            @RequestParam(name="deleted", required=false, defaultValue="false") Boolean deleted  // ← THÊM
+    ) {
+        var ids = resolveSelectionToIds(subjectId, sel, deleted);  // ← TRUYỀN THÊM
+        int ok=0; for (Long id: ids) { questionService.restore(id); ok++; }
+        return Map.of("restored", ok, "requested", ids.size());
     }
+
+    @PostMapping("/bulk-purge")
+    public Map<String,Object> bulkPurge(@PathVariable Long subjectId,
+                                        @RequestBody BulkSelectionRequest sel,
+                                        @RequestParam(name="deleted", required=false, defaultValue="false") Boolean deleted) {
+        System.out.println("bulk-purge ENTER subjectId=" + subjectId + ", deleted=" + deleted + ", sel=" + (sel==null? "null": sel.getMode()));
+        try {
+            var ids = resolveSelectionToIds(subjectId, sel, deleted);
+            System.out.println("bulk-purge ids=" + ids);
+            int purged = questionService.purgeAll(ids);
+            System.out.println("bulk-purge purged=" + purged);
+            return Map.of("purged", purged, "requested", ids.size());
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw e;
+        }
+    }
+
 }

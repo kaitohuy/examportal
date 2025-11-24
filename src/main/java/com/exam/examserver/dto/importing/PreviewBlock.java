@@ -31,4 +31,11 @@ public class PreviewBlock {
 
     public Double duplicateBundleScore;   // điểm best với bundle
     public List<Long> duplicateBundleIds; // list ứng viên bundle
+
+    // ===== NEW: clone info =====
+    public String declaredCode;                // raw chuỗi trong (Mã: ...)
+    public String cloneBaseCode;               // ví dụ "OT2.1.1"
+    public Integer cloneDesiredIndex;          // nếu user ghi C3. ... thì = 3, ngược lại null
+    public Integer cloneNextIndex;             // dự kiến index sẽ dùng (đã tính toán)
+    public String clonePreviewCode;
 }

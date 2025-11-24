@@ -5,6 +5,8 @@ import com.exam.examserver.enums.ExamTaskStatus;
 import com.exam.examserver.model.exam.ExamTask;
 import com.exam.examserver.model.exam.Subject;
 import com.exam.examserver.repo.*;
+import com.exam.examserver.service.QuestionMetaService;
+import com.exam.examserver.service.QuestionService;
 import com.exam.examserver.service.import_export.FileArchiveService;
 import jakarta.transaction.Transactional;
 import org.springframework.http.HttpStatus;
@@ -12,9 +14,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import com.exam.examserver.enums.AppArea;
+import com.exam.examserver.enums.NotificationAction;
+import com.exam.examserver.enums.NotificationTargetType;
 
 @Service
 public class ExamTaskService {
@@ -24,18 +30,20 @@ public class ExamTaskService {
     private final DepartmentRepository deptRepo;
     private final NotificationService notif;
     private final FileArchiveService fileArchiveService;
+    private final QuestionMetaService questionMetaService;
 
     public ExamTaskService(ExamTaskRepository taskRepo,
                            SubjectRepository subjectRepo,
                            UserRepository userRepo,
                            DepartmentRepository deptRepo,
-                           NotificationService notif, FileArchiveService fileArchiveService) {
+                           NotificationService notif, FileArchiveService fileArchiveService, QuestionMetaService questionMetaService) {
         this.taskRepo = taskRepo;
         this.subjectRepo = subjectRepo;
         this.userRepo = userRepo;
         this.deptRepo = deptRepo;
         this.notif = notif;
         this.fileArchiveService = fileArchiveService;
+        this.questionMetaService = questionMetaService;
     }
 
     private String displayName(Long userId) {
@@ -80,7 +88,18 @@ public class ExamTaskService {
         String subjName = subj.getCode() + (subj.getName() == null ? "" : " - " + subj.getName());
         String titleN = "Nhiệm vụ ra đề mới";
         String msg = headName + " giao nhiệm vụ: \"" + title + "\" cho môn " + subjName + ".";
-        notif.create(assignedToId, titleN, msg, null);
+        notif.create(
+                assignedToId,
+                "Nhiệm vụ ra đề mới",
+                headName + " giao nhiệm vụ: \"" + title + "\" cho môn " + subjName + ".",
+                null,
+                NotificationAction.TASK_ASSIGNED,
+                NotificationTargetType.EXAM_TASK,
+                t.getId(),
+                null,              // payload JSON (optional)
+                null,              // targetUrl (optional)
+                AppArea.TEACHER
+        );
 
         return t;
     }
@@ -102,10 +121,18 @@ public class ExamTaskService {
 
             // Notify HEAD khi bắt đầu
             String teacherName = displayName(teacherId);
-            notif.create(t.getCreatedByHeadId(),
+            notif.create(
+                    t.getCreatedByHeadId(),
                     "Giáo viên bắt đầu nhiệm vụ",
                     teacherName + " đã bắt đầu: \"" + t.getTitle() + "\".",
-                    null);
+                    null,
+                    NotificationAction.TASK_STARTED,
+                    NotificationTargetType.EXAM_TASK,
+                    t.getId(),
+                    null,
+                    null,
+                    AppArea.ADMIN
+            );
             return t;
         }
 
@@ -125,7 +152,18 @@ public class ExamTaskService {
         String headName = displayName(headUserId);
         String titleN = "Nhiệm vụ đã bị huỷ";
         String msg = headName + " đã huỷ nhiệm vụ: \"" + t.getTitle() + "\".";
-        notif.create(t.getAssignedToId(), titleN, msg, null);
+        notif.create(
+                t.getAssignedToId(),
+                "Nhiệm vụ đã bị huỷ",
+                headName + " đã huỷ nhiệm vụ: \"" + t.getTitle() + "\".",
+                null,
+                NotificationAction.TASK_CANCELLED,
+                NotificationTargetType.EXAM_TASK,
+                t.getId(),
+                null,
+                null,
+                AppArea.TEACHER
+        );
 
         return t;
     }
@@ -181,7 +219,18 @@ public class ExamTaskService {
         String headName = displayName(headUserId);
         String titleN = "Nhiệm vụ ra đề đã cập nhật";
         String msg = headName + " đã cập nhật nhiệm vụ: \"" + t.getTitle() + "\".";
-        notif.create(t.getAssignedToId(), titleN, msg, null);
+        notif.create(
+                t.getAssignedToId(),
+                "Nhiệm vụ ra đề đã cập nhật",
+                headName + " đã cập nhật nhiệm vụ: \"" + t.getTitle() + "\".",
+                null,
+                NotificationAction.TASK_UPDATED,
+                NotificationTargetType.EXAM_TASK,
+                t.getId(),
+                null,
+                null,
+                AppArea.TEACHER
+        );
 
         return tmpTask;
     }
@@ -202,8 +251,18 @@ public class ExamTaskService {
             t = taskRepo.save(t);
 
             String teacherName = displayName(teacherId);
-            notif.create(t.getCreatedByHeadId(), "Giáo viên bắt đầu nhiệm vụ",
-                    teacherName + " đã bắt đầu: \"" + t.getTitle() + "\".", null);
+            notif.create(
+                    t.getCreatedByHeadId(),
+                    "Giáo viên bắt đầu nhiệm vụ",
+                    teacherName + " đã bắt đầu: \"" + t.getTitle() + "\".",
+                    null,
+                    NotificationAction.TASK_STARTED,
+                    NotificationTargetType.EXAM_TASK,
+                    t.getId(),
+                    null,
+                    null,
+                    AppArea.ADMIN
+            );
         }
         return t;
     }
@@ -220,7 +279,7 @@ public class ExamTaskService {
         if (t.getStatus() == ExamTaskStatus.CANCELLED)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nhiệm vụ đã huỷ");
 
-        // chỉ cho nộp từ ASSIGNED/IN_PROGRESS/REPORTED/SUBMITTED (SUBMITTED = nộp lại)
+        // chỉ cho nộp từ ASSIGNED/IN_PROGRESS/REPORTED/SUBMITTED/RETURNED
         if (!(t.getStatus() == ExamTaskStatus.ASSIGNED
                 || t.getStatus() == ExamTaskStatus.IN_PROGRESS
                 || t.getStatus() == ExamTaskStatus.REPORTED
@@ -236,9 +295,12 @@ public class ExamTaskService {
                 "subjectId", t.getSubjectId()
         );
 
-        // NEW: thay thế submission cũ nếu cần (PENDING → xoá; REJECTED → giữ; APPROVED → chặn)
+        // Cờ xác định có phải nộp lại hay không (đọc TRƯỚC khi thay submission)
+        boolean isResubmit = (t.getSubmissionArchiveId() != null);
+
+        // Thay thế submission cũ nếu cần
         var arch = fileArchiveService.replacePendingSubmission(
-                t.getSubmissionArchiveId(),             // có thể null
+                t.getSubmissionArchiveId(),               // có thể null
                 t.getSubjectId(), teacherId,
                 fileName,
                 (contentType == null ? "application/octet-stream" : contentType),
@@ -252,9 +314,18 @@ public class ExamTaskService {
         t = taskRepo.save(t);
 
         String teacherName = displayName(teacherId);
-        notif.create(t.getCreatedByHeadId(), "Giáo viên đã nộp bài",
-                teacherName + " đã nộp" + (t.getSubmissionArchiveId() != null ? " lại" : "") +
-                        " cho nhiệm vụ: \"" + t.getTitle() + "\".", null);
+        notif.create(
+                t.getCreatedByHeadId(),
+                "Giáo viên đã nộp bài",
+                teacherName + " đã nộp" + (isResubmit ? " lại" : "") + " cho nhiệm vụ: \"" + t.getTitle() + "\".",
+                null,
+                NotificationAction.TASK_SUBMITTED,
+                NotificationTargetType.EXAM_TASK,
+                t.getId(),
+                null,
+                null,
+                AppArea.ADMIN
+        );
 
         return t;
     }
@@ -274,9 +345,20 @@ public class ExamTaskService {
         t = taskRepo.save(t);
 
         String teacherName = displayName(teacherId);
-        notif.create(t.getCreatedByHeadId(), "Giáo viên báo lỗi nhiệm vụ",
+        notif.create(
+                t.getCreatedByHeadId(),
+                "Giáo viên báo lỗi nhiệm vụ",
                 teacherName + " báo lỗi: \"" + t.getTitle() + "\"" +
-                        (note == null || note.isBlank() ? "" : " — Ghi chú: " + note), null);
+                        (note == null || note.isBlank() ? "" : " — Ghi chú: " + note),
+                null,
+                NotificationAction.TASK_REPORTED,          // nhớ thêm vào enum NotificationAction
+                NotificationTargetType.EXAM_TASK,
+                t.getId(),
+                null,
+                null,
+                AppArea.ADMIN
+        );
+
         return t;
     }
 
@@ -289,22 +371,30 @@ public class ExamTaskService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Bạn không có quyền duyệt nhiệm vụ này");
         }
 
-        // Cho phép duyệt khi SUBMITTED hoặc RETURNED (trường hợp từ chối nhầm)
         ExamTaskStatus st = t.getStatus();
         if (st != ExamTaskStatus.SUBMITTED && st != ExamTaskStatus.RETURNED) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Chỉ duyệt khi nhiệm vụ đang ở trạng thái ĐÃ NỘP hoặc BỊ TỪ CHỐI");
         }
 
-        // Vẫn yêu cầu có file nộp để duyệt
         Long subId = t.getSubmissionArchiveId();
         if (subId == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Chưa có tệp nộp để duyệt");
         }
 
-        // Duyệt file submission (idempotent nếu service của bạn tự kiểm tra trạng thái)
+        // 1) Duyệt submission (move tmp/ -> archives/, mark APPROVED)
         fileArchiveService.approveSubmission(subId, headUserId);
 
+        try {
+            List<Long> usedIds = fileArchiveService.extractQuestionIdsFromSubmission(subId);
+            if (!usedIds.isEmpty()) {
+                questionMetaService.markUsed(usedIds); // cập nhật lastUsedAt & usageCount trong QuestionMeta
+            }
+        } catch (Exception e) {
+            System.err.println("[WARN] Không thể cập nhật lastUsedAt/usageCount: " + e.getMessage());
+        }
+
+        // 3) Đánh dấu DONE cho task
         t.setStatus(ExamTaskStatus.DONE);
         t.setCompletedAt(Instant.now());
         t.setReviewedById(headUserId);
@@ -314,10 +404,19 @@ public class ExamTaskService {
         t = taskRepo.save(t);
 
         String headName = displayName(headUserId);
-        notif.create(t.getAssignedToId(),
+        notif.create(
+                t.getAssignedToId(),
                 "Nhiệm vụ đã được duyệt",
                 headName + " đã duyệt hoàn thành nhiệm vụ: \"" + t.getTitle() + "\".",
-                Instant.now().plusSeconds(30L * 24 * 3600));
+                Instant.now().plusSeconds(30L * 24 * 3600),
+                NotificationAction.TASK_APPROVED,
+                NotificationTargetType.EXAM_TASK,
+                t.getId(),
+                null,
+                null,
+                AppArea.TEACHER
+        );
+
         return t;
     }
 
@@ -332,11 +431,20 @@ public class ExamTaskService {
 
         // notify teacher
         String headName = displayName(reviewerId);
-        notif.create(t.getAssignedToId(),
+        notif.create(
+                t.getAssignedToId(),
                 "Nhiệm vụ bị từ chối",
                 headName + " đã từ chối và yêu cầu bạn nộp lại: \"" + t.getTitle() + "\""
                         + (reason == null || reason.isBlank() ? "" : " — Lý do: " + reason),
-                null);
+                null,
+                NotificationAction.TASK_RETURNED,
+                NotificationTargetType.EXAM_TASK,
+                t.getId(),
+                null,
+                null,
+                AppArea.TEACHER
+        );
+
         return t;
     }
 }

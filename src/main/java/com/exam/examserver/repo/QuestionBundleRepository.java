@@ -87,4 +87,7 @@ public interface QuestionBundleRepository extends JpaRepository<QuestionBundle, 
 
     @Query("select b.instructions from QuestionBundle b where b.id = :id")
     String findInstructionsById(@Param("id") Long id);
+
+    @Query("select b.subject.id from QuestionBundle b where b.id = :id")
+    Long findSubjectIdById(@Param("id") Long id);
 }

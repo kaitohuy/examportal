@@ -68,38 +68,53 @@ public final class QuestionSpecs {
     }
 
     public static Specification<Question> fullText(String qtext) {
-        return (root, q, cb) -> {
+        return (root, query, cb) -> {
             if (qtext == null || qtext.isBlank()) return cb.conjunction();
-            String like = "%" + qtext.trim().toLowerCase() + "%";
+
+            String raw = qtext.trim().toLowerCase();
+            String like = "%" + raw + "%";
+
+            // --- tách baseCode nếu chuỗi có dạng c1.NH5.10b) ---
+            // vd: raw = "c1.nh5.10b)"  -> base = "nh5.10b)"
+            String base = raw.replaceFirst("^c\\d+\\.", "");
+            String baseLike = "%" + base + "%";
+
+            // Các field text
+            Expression<String> content = cb.lower(root.get("content"));
+            Expression<String> ansText = cb.lower(root.get("answerText"));
+            Expression<String> a = cb.lower(root.get("optionA"));
+            Expression<String> b = cb.lower(root.get("optionB"));
+            Expression<String> c = cb.lower(root.get("optionC"));
+            Expression<String> d = cb.lower(root.get("optionD"));
+
+            // questionCode
+            Expression<String> code = cb.lower(root.get("questionCode"));
+
+            // id cast về string (để tìm theo id)
+            Expression<String> idExpr = cb.toString(root.get("id"));
+
+            Predicate codePred;
+            if (!base.equals(raw)) {
+                codePred = cb.or(
+                        cb.like(code, like),      // "c1.nh5.10b)"
+                        cb.like(code, baseLike)   // "nh5.10b)"  (parent)
+                );
+            } else {
+                codePred = cb.like(code, like);
+            }
+
             return cb.or(
-                    cb.like(cb.lower(root.get("content")), like),
-                    cb.like(cb.lower(root.get("answerText")), like),
-                    cb.like(cb.lower(root.get("optionA")), like),
-                    cb.like(cb.lower(root.get("optionB")), like),
-                    cb.like(cb.lower(root.get("optionC")), like),
-                    cb.like(cb.lower(root.get("optionD")), like)
+                    cb.like(content, like),
+                    cb.like(ansText, like),
+                    cb.like(a, like),
+                    cb.like(b, like),
+                    cb.like(c, like),
+                    cb.like(d, like),
+                    codePred,
+                    cb.like(idExpr, like)        // tìm theo id "352"
             );
         };
     }
-
-    // OLD (comment): dùng Specification.where(null)
-    /*
-    public static Specification<Question> flagged(Boolean flagged) {
-        if (flagged == null) return Specification.where(null);
-        return (root, query, cb) -> {
-            var sub = query.subquery(Long.class);
-            var qi = sub.from(QuestionIssue.class);
-            var statusPath = qi.get("status");
-            sub.select(cb.literal(1L))
-               .where(
-                    cb.equal(qi.get("question").get("id"), root.get("id")),
-                    cb.equal(statusPath, IssueStatus.OPEN)
-               );
-            if (flagged) return cb.exists(sub);
-            else return cb.not(cb.exists(sub));
-        };
-    }
-    */
 
     // NEW: trả về cb.conjunction() khi flagged == null
     public static Specification<Question> flagged(Boolean flagged) {

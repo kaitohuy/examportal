@@ -98,5 +98,15 @@ public final class QuestionMetaSpecs {
         return (root, q, cb) -> (ns == null || ns.isEmpty()) ? cb.conjunction()
                 : root.get("itemNature").in(ns);
     }
+
+    public static Specification<QuestionMeta> notUsedWithinYears(int years) {
+        return (root, query, cb) -> {
+            LocalDateTime threshold = LocalDateTime.now().minusYears(years);
+            return cb.or(
+                    cb.isNull(root.get("lastUsedAt")),
+                    cb.lessThan(root.get("lastUsedAt"), threshold)
+            );
+        };
+    }
 }
 

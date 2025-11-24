@@ -34,7 +34,15 @@ public interface UserRepository extends JpaRepository<User, Long> {
        """)
     List<Long> searchIdsByKeyword(@Param("q") String q);
 
-    long countByDepartment_Id(Long deptId);
+    @Query("""
+      select count(distinct u.id)
+      from User u
+      join u.teacherSubjects ts
+      join ts.subject s
+      where s.department.id = :deptId
+    """)
+    long countByDepartment_Id(@Param("deptId") Long deptId);
+
 
     @Query("""
       select count(distinct u.id)

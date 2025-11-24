@@ -18,6 +18,15 @@ public class QuestionFilter {
     private LocalDateTime to;
     private String q;
     private Boolean flagged;
+    private Boolean deletedOnly;
+
+    public Boolean getDeletedOnly() {
+        return deletedOnly;
+    }
+
+    public void setDeletedOnly(Boolean deletedOnly) {
+        this.deletedOnly = deletedOnly;
+    }
 
     public Boolean getFlagged() {
         return flagged;

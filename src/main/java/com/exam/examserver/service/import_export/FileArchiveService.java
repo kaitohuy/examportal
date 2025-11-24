@@ -1,7 +1,6 @@
 package com.exam.examserver.service.import_export;
 
-import com.exam.examserver.enums.ArchiveVariant;
-import com.exam.examserver.enums.ReviewStatus;
+import com.exam.examserver.enums.*;
 import com.exam.examserver.model.exam.FileArchive;
 import com.exam.examserver.repo.FileArchiveRepository;
 import com.exam.examserver.repo.SubjectRepository;
@@ -11,6 +10,7 @@ import com.exam.examserver.storage.FileArchiveStorage;
 import com.exam.examserver.storage.GcsObjectHelper;
 import com.exam.examserver.storage.GcsSignedUrl;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.transaction.Transactional;
 import org.apache.commons.codec.digest.DigestUtils;
@@ -18,10 +18,11 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.io.ByteArrayInputStream;
 import java.time.*;
-import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 @Service
 public class FileArchiveService {
@@ -127,10 +128,21 @@ public class FileArchiveService {
         fileRepo.save(fa);
 
         // NEW: tạo notification
-        notifyHeadOnPending(subjectId, userId, safeName);
+        notifyHeadOnPending(fa);
         // (tuỳ chọn) báo cho chính GV rằng đã gửi thành công
-        notif.create(userId, "Đã gửi file chờ duyệt",
-                "Bạn đã gửi \"" + safeName + "\" để chờ duyệt.", Instant.now().plus(Duration.ofDays(7)));
+        notif.create(
+                userId,
+                "Đã gửi file chờ duyệt",
+                "Bạn đã gửi \"" + safeName + "\" để chờ duyệt.",
+                Instant.now().plus(Duration.ofDays(7)),
+                NotificationAction.FILE_PENDING_REVIEW,
+                NotificationTargetType.FILE_ARCHIVE,
+                fa.getId(),
+                null,
+                null,
+                AppArea.TEACHER
+        );
+
     }
 
     // helper mới — loại bỏ mọi path trong tên file để không lồng thư mục
@@ -200,7 +212,13 @@ public class FileArchiveService {
                     fa.getUserId(),
                     "File đã bị xoá",
                     "File \"" + fa.getFilename() + "\" (đã được duyệt) đã bị xoá khỏi hệ thống.",
-                    Instant.now().plus(Duration.ofDays(30))
+                    Instant.now().plus(Duration.ofDays(30)),
+                    NotificationAction.FILE_DELETED,
+                    NotificationTargetType.FILE_ARCHIVE,
+                    fa.getId(),
+                    null,
+                    null,
+                    AppArea.TEACHER
             );
         }
     }
@@ -258,35 +276,58 @@ public class FileArchiveService {
                 .orElse("User #" + userId);
     }
 
-    private void notifyHeadOnPending(Long subjectId, Long uploaderId, String filename) {
-        Long headId = subjectRepo.findHeadUserIdBySubjectId(subjectId);
-        if (headId == null) return; // khoa chưa có head, bỏ qua
-
-        String upName = displayName(uploaderId);
-        String title = "Có file chờ duyệt";
-        String msg = "Giáo viên " + upName + " gửi file \"" + filename + "\" chờ duyệt.";
-        notif.create(headId, title, msg, null); // không đặt expiresAt -> lưu vô thời hạn
+    private void notifyHeadOnPending(FileArchive fa) {
+        Long headId = subjectRepo.findHeadUserIdBySubjectId(fa.getSubjectId());
+        if (headId == null) return;
+        String upName = displayName(fa.getUserId());
+        notif.create(
+                headId,
+                "Có file chờ duyệt",
+                "Giáo viên " + upName + " gửi file \"" + fa.getFilename() + "\" chờ duyệt.",
+                null,
+                NotificationAction.FILE_PENDING_REVIEW,
+                NotificationTargetType.FILE_ARCHIVE,
+                fa.getId(),
+                null,
+                null,
+                AppArea.HEAD
+        );
     }
 
     private void notifyTeacherOnApproved(FileArchive fa, Long reviewerId) {
         if (fa.getUserId() == null) return;
         String rvName = (reviewerId != null) ? displayName(reviewerId) : "HEAD";
-        String title = "File đã được duyệt";
-        String msg = "File \"" + fa.getFilename() + "\" đã được duyệt bởi " + rvName + ".";
-        notif.create(fa.getUserId(), title, msg, Instant.now().plus(Duration.ofDays(30)));
+        notif.create(
+                fa.getUserId(),
+                "File đã được duyệt",
+                "File \"" + fa.getFilename() + "\" đã được duyệt bởi " + rvName + ".",
+                Instant.now().plus(Duration.ofDays(30)),
+                NotificationAction.FILE_APPROVED,
+                NotificationTargetType.FILE_ARCHIVE,
+                fa.getId(),
+                null,
+                null,
+                AppArea.TEACHER
+        );
     }
 
     private void notifyTeacherOnRejected(FileArchive fa, Long reviewerId) {
         if (fa.getUserId() == null) return;
         String rvName = (reviewerId != null) ? displayName(reviewerId) : "HEAD";
         String reason = Optional.ofNullable(fa.getReviewNote()).orElse("(không có)");
-        String dl = (fa.getReviewDeadline() != null)
-                ? " Hạn xử lý: " + fa.getReviewDeadline().toString()
-                : "";
-        String title = "File bị từ chối";
-        String msg = "File \"" + fa.getFilename() + "\" bị từ chối bởi " + rvName +
-                ". Lý do: " + reason + "." + dl;
-        notif.create(fa.getUserId(), title, msg, Instant.now().plus(Duration.ofDays(14)));
+        String dl = (fa.getReviewDeadline() != null) ? " Hạn xử lý: " + fa.getReviewDeadline() : "";
+        notif.create(
+                fa.getUserId(),
+                "File bị từ chối",
+                "File \"" + fa.getFilename() + "\" bị từ chối bởi " + rvName + ". Lý do: " + reason + "." + dl,
+                Instant.now().plus(Duration.ofDays(14)),
+                NotificationAction.FILE_REJECTED,
+                NotificationTargetType.FILE_ARCHIVE,
+                fa.getId(),
+                null,
+                null,
+                AppArea.TEACHER
+        );
     }
 
     // --- NEW: nộp bài (PENDING) lưu vào tmp/, trả FileArchive để lấy id ---
@@ -331,10 +372,19 @@ public class FileArchiveService {
         fa = fileRepo.save(fa);
 
         // thông báo HEAD: có file nộp chờ duyệt
-        notifyHeadOnPending(subjectId, userId, safeName);
-        // tùy chọn: thông báo lại cho GV
-        notif.create(userId, "Đã nộp bài chờ duyệt",
-                "Bạn đã nộp \"" + safeName + "\" để chờ duyệt.", Instant.now().plus(Duration.ofDays(7)));
+        notifyHeadOnPending(fa);
+        notif.create(
+                userId,
+                "Đã nộp bài chờ duyệt",
+                "Bạn đã nộp \"" + safeName + "\" để chờ duyệt.",
+                Instant.now().plus(Duration.ofDays(7)),
+                NotificationAction.FILE_PENDING_REVIEW,
+                NotificationTargetType.FILE_ARCHIVE,
+                fa.getId(),
+                null,
+                null,
+                AppArea.TEACHER
+        );
 
         return fa;
     }
@@ -394,5 +444,56 @@ public class FileArchiveService {
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Lỗi cập nhật metaJson", e);
         }
+    }
+
+    public List<Long> extractQuestionIdsFromSubmission(Long archiveId) throws Exception {
+        FileArchive sub = fileRepo.findById(archiveId)
+                .orElseThrow(() -> new IllegalArgumentException("Archive không tồn tại: " + archiveId));
+        if (sub.getStorageKey() == null) return List.of();
+
+        byte[] zipBytes = gcs.readBytes(sub.getStorageKey());
+        if (zipBytes == null || zipBytes.length == 0) return List.of();
+
+        byte[] blueprintBytes = null;
+        try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(zipBytes))) {
+            ZipEntry e;
+            while ((e = zis.getNextEntry()) != null) {
+                if (!e.isDirectory() && e.getName().toLowerCase().endsWith("blueprint.json")) {
+                    blueprintBytes = zis.readAllBytes();
+                    break;
+                }
+            }
+        }
+        if (blueprintBytes == null) return List.of();
+
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode root = mapper.readTree(blueprintBytes);
+
+        List<Long> ids = new ArrayList<>();
+        JsonNode rows = root.get("rows");
+        if (rows != null && rows.isArray()) {
+            for (JsonNode row : rows) {
+                JsonNode cells = row.get("cells");
+                if (cells == null) continue;
+                // Hỗ trợ 2 format:
+                //  (A) cell = [1,2,3]  (kiểu cũ – chỉ IDs)
+                //  (B) cell = { ids:[1,2], codes:[...] }  (kiểu mới)
+                for (JsonNode cell : cells) {
+                    if (cell.isArray()) {
+                        for (JsonNode idNode : cell) {
+                            if (idNode.canConvertToLong()) ids.add(idNode.longValue());
+                        }
+                    } else if (cell.isObject()) {
+                        JsonNode idsArr = cell.get("ids");
+                        if (idsArr != null && idsArr.isArray()) {
+                            for (JsonNode idNode : idsArr) {
+                                if (idNode.canConvertToLong()) ids.add(idNode.longValue());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return ids;
     }
 }

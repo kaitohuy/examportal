@@ -19,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Collection;
+import java.util.List;
 
 @Service
 @Transactional
@@ -96,5 +97,10 @@ public class QuestionMetaServiceImpl implements QuestionMetaService {
                 metaRepo.save(m);
             });
         }
+    }
+
+    @Override
+    public List<String> findDistinctTypeCodesApproved(Long subjectId) {
+        return metaRepo.findDistinctTypeCodesBySubjectApproved(subjectId);
     }
 }

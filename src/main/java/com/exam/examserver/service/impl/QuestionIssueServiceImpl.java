@@ -1,7 +1,10 @@
 package com.exam.examserver.service.impl;
 
 import com.exam.examserver.dto.exam.QuestionIssueDTO;
+import com.exam.examserver.enums.AppArea;
 import com.exam.examserver.enums.IssueStatus;
+import com.exam.examserver.enums.NotificationAction;
+import com.exam.examserver.enums.NotificationTargetType;
 import com.exam.examserver.model.exam.Question;
 import com.exam.examserver.model.exam.QuestionIssue;
 import com.exam.examserver.model.exam.Subject;
@@ -9,7 +12,6 @@ import com.exam.examserver.model.user.User;
 import com.exam.examserver.repo.QuestionIssueRepository;
 import com.exam.examserver.repo.QuestionRepository;
 import com.exam.examserver.repo.UserRepository;
-import com.exam.examserver.service.impl.NotificationService;
 import com.exam.examserver.service.QuestionIssueService;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
@@ -85,7 +87,22 @@ public class QuestionIssueServiceImpl implements QuestionIssueService {
                         + ((subj.getName() == null || subj.getName().isBlank()) ? "" : " - " + subj.getName())
                         + ". Lý do: " + saved.getReason();
                 // expiresAt: tuỳ bạn, để null cho thông báo thường
-                notif.create(headUserId, titleN, msg, null);
+                notif.create(
+                        headUserId,
+                        "Câu hỏi bị báo lỗi",
+                        reporterName + " đã báo lỗi câu hỏi #" + q.getId()
+                                + " của môn " + (subj.getCode() == null ? "" : subj.getCode())
+                                + ((subj.getName() == null || subj.getName().isBlank()) ? "" : " - " + subj.getName())
+                                + ". Lý do: " + saved.getReason(),
+                        null,
+                        NotificationAction.QUESTION_FLAGGED,
+                        NotificationTargetType.QUESTION,
+                        q.getId(),
+                        null,
+                        null,
+                        AppArea.ADMIN
+                );
+
             }
         } catch (Exception ignored) {}
 
@@ -121,7 +138,19 @@ public class QuestionIssueServiceImpl implements QuestionIssueService {
                 String actorName = displayName(actor);
                 String titleN = "Câu hỏi đã được gỡ báo lỗi";
                 String msg = actorName + " đã gỡ báo lỗi cho câu hỏi #" + q.getId() + ".";
-                notif.create(issue.getFlaggedBy().getId(), titleN, msg, null);
+                notif.create(
+                        issue.getFlaggedBy().getId(),
+                        "Câu hỏi đã được gỡ báo lỗi",
+                        actorName + " đã gỡ báo lỗi cho câu hỏi #" + q.getId() + ".",
+                        null,
+                        NotificationAction.QUESTION_UNFLAGGED,
+                        NotificationTargetType.QUESTION,
+                        q.getId(),
+                        null,
+                        null,
+                        AppArea.TEACHER
+                );
+
             }
         } catch (Exception ignored) {}
 

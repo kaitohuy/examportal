@@ -1,5 +1,6 @@
 package com.exam.examserver.util;
 
+import java.util.AbstractMap;
 import java.util.regex.*;
 
 public final class ImportRegex {
@@ -278,4 +279,54 @@ public final class ImportRegex {
         return t.isBlank() ? null : t;
     }
 
+    // --- CODE DECLARATION --------------------------------------------------------
+    public static final Pattern P_CODE_DECL = Pattern.compile(
+            "(?mi)" +
+                    "(?:\\(\\s*M[ãa]\\s*:\\s*([^\\r\\n]*?\\)?)\\s*\\))" +   // group 1: có ngoặc
+                    "|" +
+                    "(?:^|\\R)\\s*M[ãa]\\s*:\\s*([^\\r\\n]+)"               // group 2: không ngoặc
+    );
+
+    private static final Pattern P_CLONE_PREFIX =
+            Pattern.compile("(?i)^C\\s*(\\d+)\\.(.+)$");
+
+    /** Trích mã từ block; trả về chuỗi đã trim (giữ nguyên dấu ')'). */
+    /** Trích mã từ block; trả về chuỗi đã chuẩn hoá (giữ hoặc bổ sung ')' nếu thiếu). */
+    public static String extractDeclaredCode(String block) {
+        if (block == null) return null;
+        Matcher m = P_CODE_DECL.matcher(block);
+        if (!m.find()) return null;
+
+        // Lấy group nào không null (nhánh có ngoặc hay không ngoặc)
+        String raw = m.group(1) != null ? m.group(1) : m.group(2);
+        if (raw == null) return null;
+
+        // Normalize nhẹ
+        raw = raw.replace('\u00A0',' ').trim();
+        raw = raw.replaceFirst("^[,;\\.]+", "");   // bỏ dấu thừa đầu
+        raw = raw.replaceFirst("[,;\\.]\\s*$", ""); // bỏ dấu thừa cuối (không đụng ')')
+        raw = raw.replaceAll("\\s{2,}", " ").trim();
+
+        // Nếu kết thúc bằng chữ a–d mà thiếu dấu ')', tự thêm cho chuẩn "…a)"
+        if (raw.matches("(?i).*[a-d]$")) raw = raw + ")";
+
+        return raw;
+    }
+
+    /** Parse "C#.<base>" -> [index, base]; nếu không có prefix C# -> [null, base] */
+    public static AbstractMap.SimpleEntry<Integer,String> parseCloneCode(String code) {
+        if (code == null) return null;
+        var m = P_CLONE_PREFIX.matcher(code.trim());
+        if (!m.find()) return new AbstractMap.SimpleEntry<>(null, code.trim());
+        Integer idx = null;
+        try { idx = Integer.parseInt(m.group(1)); } catch (Exception ignore) {}
+        String base = m.group(2).trim();
+        return new AbstractMap.SimpleEntry<>(idx, base);
+    }
+
+    public static String stripCodeDeclaration(String s) {
+        if (s == null) return null;
+        String out = P_CODE_DECL.matcher(s).replaceAll("");
+        return out.replaceAll("\\(\\s*\\)", ""); // dọn "()" rỗng nếu còn
+    }
 }

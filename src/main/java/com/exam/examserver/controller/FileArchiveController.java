@@ -358,9 +358,11 @@ public class FileArchiveController {
             if ("SUBMISSION".equalsIgnoreCase(nowFa.getKind())
                     && nowFa.getVariant() != null
                     && "EXAM".equalsIgnoreCase(nowFa.getVariant().name())) {
-                var ans = answerPackService.buildAndSaveAnswerFromSubmission(id, rid, null); // releaseAt=null
+                var ansRaw = answerPackService.buildAndSaveAnswerFromSubmission(id, rid, null); // releaseAt=null
+                var ans = finalizeAnswerArchive(ansRaw, rid);   // <-- SET reviewer + time
                 answerBuilt = (ans != null);
                 answerArchiveId = (ans == null ? null : ans.getId());
+
             }
         } catch (Exception e) {
             answerError = e.getMessage();
@@ -539,33 +541,6 @@ public class FileArchiveController {
         if (sids == null || !sids.contains(fa.getSubjectId()))
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);
     }
-
-//    private void ensureDeletable(FileArchive fa) {
-//        var username = currentUsername();
-//        var userOpt = userRepo.findByUsername(username);
-//        if (userOpt.isEmpty()) throw new ResponseStatusException(HttpStatus.FORBIDDEN);
-//        var user = userOpt.get();
-//
-//        boolean isAdmin = user.getUserRoles().stream().anyMatch(ur -> ur.getRole().getRoleName() == RoleType.ADMIN);
-//        if (isAdmin) return;
-//
-//        boolean isHead = user.getUserRoles().stream().anyMatch(ur -> ur.getRole().getRoleName() == RoleType.HEAD);
-//        if (isHead) {
-//            var scope = scopeResolver.resolveByUsername(username);
-//            var sids = scope.subjectIds;
-//            if (sids == null || !sids.contains(fa.getSubjectId()))
-//                throw new ResponseStatusException(HttpStatus.FORBIDDEN);
-//            return;
-//        }
-//
-//        // TEACHER: chỉ xoá của mình; EXPORT đã APPROVED thì không cho xoá
-//        if (!Objects.equals(fa.getUserId(), user.getId()))
-//            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
-//        if ("EXPORT".equalsIgnoreCase(fa.getKind())
-//                && fa.getReviewStatus() == ReviewStatus.APPROVED)
-//            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
-//    }
-
 
     // Bỏ qua gate nếu không phải ANSWER, hoặc nếu user là ADMIN/HEAD (cùng scope)
     private void ensureAnswerReleasedIfNeeded(FileArchive fa) {
@@ -784,10 +759,13 @@ public class FileArchiveController {
 
         // 6) Sinh đáp án
         try {
-            FileArchive answerArchive = answerPackService.buildAndSaveAnswerFromSubmission(
-                    submissionArchiveId,
-                    actorUserId,
-                    releaseAtTs
+            FileArchive answerArchive = finalizeAnswerArchive(
+                    answerPackService.buildAndSaveAnswerFromSubmission(
+                            submissionArchiveId,
+                            actorUserId,
+                            releaseAtTs
+                    ),
+                    actorUserId // HEAD/ADMIN đang thao tác
             );
 
             Map<String, Object> response = new LinkedHashMap<>();
@@ -850,4 +828,18 @@ public class FileArchiveController {
                     "Không thể xóa file EXPORT đã được duyệt");
         }
     }
+
+    private FileArchive finalizeAnswerArchive(FileArchive answer, Long reviewerId) {
+        if (answer == null) return null;
+        // Nếu chưa có status thì set APPROVED
+        if (answer.getReviewStatus() == null) {
+            answer.setReviewStatus(ReviewStatus.APPROVED);
+        }
+        answer.setReviewedAt(Instant.now());
+        if (reviewerId != null) {
+            answer.setReviewedById(reviewerId);
+        }
+        return fileRepo.save(answer);
+    }
+
 }
