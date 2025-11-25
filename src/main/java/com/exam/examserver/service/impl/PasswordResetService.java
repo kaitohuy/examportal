@@ -11,6 +11,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -34,7 +35,7 @@ public class PasswordResetService {
     private final PasswordResetTokenRepository tokenRepo;
     private final UserRepository userRepo;
     private final JavaMailSender mailSender;
-    private final BCryptPasswordEncoder passwordEncoder;
+    private final PasswordEncoder passwordEncoder;
 
     /** “From” hiển thị trong email, ví dụ: ExamPortal <no-reply@examportal.local> */
     @Value("${app.mail.from:no-reply@examportal.local}")
@@ -48,7 +49,7 @@ public class PasswordResetService {
             PasswordResetTokenRepository tokenRepo,
             UserRepository userRepo,
             JavaMailSender mailSender,
-            BCryptPasswordEncoder passwordEncoder
+            PasswordEncoder passwordEncoder
     ) {
         this.tokenRepo = tokenRepo;
         this.userRepo = userRepo;
