@@ -57,4 +57,24 @@ public interface UserRepository extends JpaRepository<User, Long> {
     long countByRoleAndDepartment(@Param("role") RoleType role,
                                   @Param("deptId") Long deptId);
 
+    @Query("""
+  select distinct u
+  from User u
+  join u.userRoles ur
+  join ur.role r
+  left join u.department d
+  where r.roleName = :role
+    and (:deptId is null or d.id = :deptId)
+""")
+    List<User> findByRoleAndDepartmentId(@Param("role") RoleType role,
+                                         @Param("deptId") Long deptId);
+
+    @Query("""
+  select distinct u
+  from User u
+  join u.userRoles ur
+  join ur.role r
+  where r.roleName = :role
+""")
+    List<User> findByRole(@Param("role") RoleType role);
 }

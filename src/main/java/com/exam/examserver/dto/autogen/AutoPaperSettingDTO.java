@@ -1,6 +1,7 @@
 // src/main/java/com/exam/examserver/dto/autogen/AutoPaperSettingDTO.java
 package com.exam.examserver.dto.autogen;
 
+import com.exam.examserver.enums.AutoSettingKind;
 import com.exam.examserver.enums.QuestionLabel;
 import java.util.List;
 import java.util.Set;
@@ -15,4 +16,5 @@ public class AutoPaperSettingDTO {
     public boolean noRepeatAcross;
     public Integer notUsedYears;
     public List<AutoGenStepDTO> steps;
+    public AutoSettingKind kind;
 }

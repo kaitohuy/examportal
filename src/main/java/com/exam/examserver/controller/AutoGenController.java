@@ -2,6 +2,7 @@
 package com.exam.examserver.controller;
 
 import com.exam.examserver.dto.autogen.*;
+import com.exam.examserver.enums.AutoSettingKind;
 import com.exam.examserver.model.exam.Subject;
 import com.exam.examserver.model.user.CustomUserDetails;
 import com.exam.examserver.repo.QuestionRepository;
@@ -46,15 +47,19 @@ public class AutoGenController {
     // Xem ma trận pick (không ghi DB)
     @PostMapping("/preview")
     public AutoGenPreviewResponse preview(@PathVariable Long subjectId,
+                                          @RequestParam(name = "kind", defaultValue = "EXAM")
+                                          AutoSettingKind kind,
                                           @RequestBody AutoGenRequest req) {
-        return autoService.preview(subjectId, req);
+        return autoService.preview(subjectId, req, kind);
     }
 
     // Ghi dấu sử dụng (lastUsedAt/usageCount) – trả lại ma trận giống preview
     @PostMapping("/commit")
     public AutoGenPreviewResponse commit(@PathVariable Long subjectId,
+                                         @RequestParam(name = "kind", defaultValue = "EXAM")
+                                         AutoSettingKind kind,
                                          @RequestBody AutoGenRequest req) {
-        return autoService.commit(subjectId, req);
+        return autoService.commit(subjectId, req, kind);
     }
 
     // === NEW: Xuất ZIP gồm N đề (DOCX) + Ma trận (DOCX), đồng thời lưu vào kho ===

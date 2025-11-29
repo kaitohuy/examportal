@@ -46,6 +46,10 @@ public class ImportQuestionService {
                     Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE | Pattern.MULTILINE);
     private static final Pattern P_POINTS_INLINE =
             Pattern.compile("\\(\\s*\\d+\\s*đi(?:ể|e)m\\s*\\)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+    // Dòng bắt đầu bằng "Đáp án:", "Giải thích:", "Lời giải" ...
+    private static final Pattern P_ANSWER_LINE =
+            Pattern.compile("(?iu)^(đáp\\s*án|giải\\s*thích|lời\\s*giải)\\s*[:：].*$",
+                    Pattern.MULTILINE);
 
     private static record PreludeCut(String body, String preludeImages) {}
 
@@ -350,7 +354,13 @@ public class ImportQuestionService {
 
                 // ===== ESSAY có a)/b)/c) =====
                 if (qt == QuestionType.ESSAY) {
+                    // parts = các ý a), b), c) ... đã tách
                     List<String> parts = splitEssaySubitems(sourceClean);
+
+                    // ansMap = đáp án cho từng ý, nếu có
+                    Map<String, String> ansMap = splitEssayAnswers(sourceRaw);
+                    String globalAns = ansMap.get("__ALL__"); // đáp án chung (nếu không tách theo a/b)
+
                     if (parts.size() >= 2) {
                         List<Long> createdIds = new ArrayList<>();
                         for (int i = 0; i < parts.size(); i++) {
@@ -361,7 +371,14 @@ public class ImportQuestionService {
                                 sub.setDifficulty(dto.getDifficulty());
                                 sub.setChapter(dto.getChapter());
                                 sub.setContent(beautifyMath(sanitizeText(seg)));
-                                sub.setAnswerText("");
+
+                                // quyết định đáp án cho ý này
+                                String letter = String.valueOf((char) ('a' + i)); // a, b, c ...
+                                String rawAns = ansMap.get(letter);
+                                if (rawAns == null) rawAns = globalAns;  // nếu không có a/b riêng -> dùng đáp án chung
+                                if (rawAns == null) rawAns = "";
+
+                                sub.setAnswerText(beautifyMath(sanitizeText(rawAns)));
                                 sub.setLabels(dto.getLabels());
 
                                 QuestionDTO subSaved = questionService.create(subjectId, sub, userId, null);
@@ -369,7 +386,7 @@ public class ImportQuestionService {
 
                                 // gán code theo TYPE nếu có
                                 if (typeCode != null) {
-                                    String rawCode = buildCodeFromType(prefix, typeCode, i + 1); // TC2.1.1.a)
+                                    String rawCode = buildCodeFromType(prefix, typeCode, i + 1); // NH1.1.a)
                                     String qc = ensureUniqueCode(subjectId, rawCode);
                                     questionService.updateQuestionCode(subId, qc);
                                 }
@@ -399,11 +416,11 @@ public class ImportQuestionService {
                                 createdIds.add(subId);
                                 success++;
                             } catch (Exception subEx) {
-                                errors.add(String.format("Block#%d sub[%d] ERROR: %s", cb.index, i+1, subEx.getMessage()));
+                                errors.add(String.format("Block#%d sub[%d] ERROR: %s", cb.index, i + 1, subEx.getMessage()));
                             }
                         }
 
-                        // bundle ≥2 sub
+                        // bundle ≥2 sub (giữ nguyên như cũ)
                         if (createdIds.size() >= 2) {
                             try {
                                 List<BundleService.CreateItem> items = new ArrayList<>();
@@ -425,7 +442,7 @@ public class ImportQuestionService {
                                 errors.add(String.format("Block#%d bundle ERROR: %s", cb.index, bex.getMessage()));
                             }
                         }
-                        continue;
+                        continue; // đã xử lý xong block này
                     }
                 }
 
@@ -521,8 +538,54 @@ public class ImportQuestionService {
                 .replace('\u00A0', ' '); // NBSP -> space
     }
 
+    /**
+     * Cắt bỏ block "Đáp án: ..." ở cuối (nếu có), chỉ giữ phần nội dung câu hỏi.
+     * Dùng chung cho các hàm tách ý a), b), c) để không đếm nhầm a), b) ở phần đáp án.
+     */
+    private String stripAnswerBlock(String source) {
+        if (source == null) return null;
+
+        String orig = source;
+
+        // Ưu tiên dùng P_ANSWER_LABEL (bắt cả text đáp án phía sau)
+        Matcher m = P_ANSWER_LABEL.matcher(source);
+        int cutPos = -1;
+        if (m.find()) {
+            cutPos = m.start();
+            System.out.println("[IMPORT][stripAnswerBlock] Hit P_ANSWER_LABEL at index " + cutPos);
+        } else {
+            // Fallback: chỉ bắt dòng "Đáp án:" / "Giải thích:" / "Lời giải"
+            Matcher mLine = P_ANSWER_LINE.matcher(source);
+            if (mLine.find()) {
+                cutPos = mLine.start();
+                System.out.println("[IMPORT][stripAnswerBlock] Hit P_ANSWER_LINE at index " + cutPos);
+            }
+        }
+
+        if (cutPos >= 0) {
+            String questionPart = source.substring(0, cutPos).trim();
+            String answerPart   = orig.substring(cutPos).trim();
+
+            System.out.println("========== [IMPORT][stripAnswerBlock] ==========");
+            System.out.println("[QUESTION PART]:");
+            System.out.println(questionPart);
+            System.out.println("--------------- [ANSWER PART]:");
+            System.out.println(answerPart);
+            System.out.println("===============================================");
+
+            return questionPart;
+        }
+
+        System.out.println("[IMPORT][stripAnswerBlock] No answer label found, keep full block.");
+        return source;
+    }
+
+
     private List<String> splitEssaySubitems(String source) {
         if (source == null) return List.of();
+
+        // 0) bỏ phần Đáp án để không đếm a), b) trong phần answer
+        source = stripAnswerBlock(source);
 
         // 1) bóc {hl} trước khi split
         String text = stripHlAndNormalize(source);
@@ -530,11 +593,22 @@ public class ImportQuestionService {
         // 2) bỏ dòng header "Câu n ..."
         text = P_HEADER_LINE.matcher(text).replaceFirst("");
 
+        // DEBUG
+        System.out.println("========== [IMPORT][splitEssaySubitems] ==========");
+        System.out.println("[INPUT AFTER stripAnswerBlock]:");
+        System.out.println(text);
+
         // 3) tìm các đầu mục a)/b)/...
         Matcher m = P_SUBITEM_HEADER.matcher(text);
         List<Integer> starts = new ArrayList<>();
         while (m.find()) starts.add(m.start());
-        if (starts.size() < 2) return List.of(); // không có ≥2 ý => không tách
+
+        System.out.println("[IMPORT][splitEssaySubitems] subitem count = " + starts.size());
+
+        if (starts.size() < 2) {
+            System.out.println("[IMPORT][splitEssaySubitems] <2 subitems -> return empty");
+            return List.of(); // không có ≥2 ý => không tách
+        }
 
         // 4) cắt theo spans
         List<String> parts = new ArrayList<>();
@@ -546,10 +620,147 @@ public class ImportQuestionService {
             // bỏ tiền tố a)/a./a:/ (a)
             seg = P_SUBITEM_HEADER.matcher(seg).replaceFirst("");
             seg = seg.trim();
-            if (!seg.isBlank()) parts.add(seg);
+            if (!seg.isBlank()) {
+                parts.add(seg);
+                System.out.println("[IMPORT][splitEssaySubitems] part[" + i + "]: " + seg);
+            }
         }
+        System.out.println("===============================================");
         return parts;
     }
+
+    private SplitResult splitEssaySubitemsWithStem(String source) {
+        if (source == null) return new SplitResult(null, List.of());
+
+        // 0) bỏ phần Đáp án, chỉ giữ phần câu hỏi để tách stem + các ý
+        source = stripAnswerBlock(source);
+
+        // bóc {hl}, normalize y như cũ
+        String text = stripHlAndNormalize(source);
+        // bỏ dòng "Câu n ..."
+        text = P_HEADER_LINE.matcher(text).replaceFirst("");
+
+        System.out.println("====== [IMPORT][splitEssaySubitemsWithStem] ======");
+        System.out.println("[INPUT AFTER stripAnswerBlock]:");
+        System.out.println(text);
+
+        // tìm vị trí các đầu mục a)/b)/...
+        Matcher m = P_SUBITEM_HEADER.matcher(text);
+        List<Integer> starts = new ArrayList<>();
+        while (m.find()) starts.add(m.start());
+
+        System.out.println("[IMPORT][splitEssaySubitemsWithStem] subitem count = " + starts.size());
+
+        if (starts.size() < 2)
+            return new SplitResult(null, List.of()); // không đủ để tạo bundle
+
+        // stem = phần trước ý đầu tiên
+        String stem = text.substring(0, starts.get(0)).trim();
+
+        // cắt từng ý như cũ
+        List<String> parts = new ArrayList<>();
+        for (int i = 0; i < starts.size(); i++) {
+            int from = starts.get(i);
+            int to = (i + 1 < starts.size()) ? starts.get(i + 1) : text.length();
+            String seg = text.substring(from, to);
+            seg = P_SUBITEM_HEADER.matcher(seg).replaceFirst("").trim();
+            if (!seg.isBlank()) {
+                parts.add(seg);
+                System.out.println("[IMPORT][splitEssaySubitemsWithStem] part[" + i + "]: " + seg);
+            }
+        }
+
+        if (stem != null && stem.isBlank()) stem = null;
+
+        System.out.println("[STEM]: " + stem);
+        System.out.println("===============================================");
+        return new SplitResult(stem, parts);
+    }
+
+    private Map<String, String> splitEssayAnswers(String source) {
+        Map<String, String> map = new LinkedHashMap<>();
+        if (source == null) return map;
+
+        Matcher labelM = P_ANSWER_LABEL.matcher(source);
+        if (!labelM.find()) {
+            System.out.println("[IMPORT][splitEssayAnswers] no ANSWER_LABEL");
+            return map;
+        }
+
+        // Lấy toàn bộ phần từ "Đáp án:" trở đi
+        String fullAns = source.substring(labelM.start()).trim();
+
+        // Bỏ dòng đầu chứa chữ "Đáp án:"
+        int nl = fullAns.indexOf('\n');
+        String ansBlock = (nl >= 0) ? fullAns.substring(nl + 1) : "";
+        ansBlock = ansBlock.trim();
+        if (ansBlock.isBlank()) return map;
+
+        // bóc {hl}, NBSP ...
+        String text = stripHlAndNormalize(ansBlock);
+
+        System.out.println("==== [IMPORT][splitEssayAnswers] ====");
+        System.out.println("[RAW ANSWER BLOCK]:");
+        System.out.println(ansBlock);
+        System.out.println("[AFTER normalize]:");
+        System.out.println(text);
+
+        // Tìm các đầu mục a)/b)/...
+        Matcher m = P_SUBITEM_HEADER.matcher(text);
+        List<Integer> starts = new ArrayList<>();
+        List<String> letters = new ArrayList<>();
+        while (m.find()) {
+            String whole = m.group(); // ví dụ "a) ", "b) "
+            // tự bóc chữ cái đầu tiên trong match
+            char letterChar = 0;
+            for (int i = 0; i < whole.length(); i++) {
+                char ch = whole.charAt(i);
+                if (Character.isLetter(ch)) {
+                    letterChar = Character.toLowerCase(ch);
+                    break;
+                }
+            }
+            if (letterChar == 0) {
+                System.out.println("[splitEssayAnswers] WARN cannot extract letter from match: '" + whole + "'");
+                continue;
+            }
+            String letter = String.valueOf(letterChar); // "a", "b", ...
+            starts.add(m.start());
+            letters.add(letter);
+        }
+
+        System.out.println("[splitEssayAnswers] sub answers found = " + starts.size());
+
+        // Không có a)/b)/... -> coi là 1 đáp án chung cho toàn câu
+        if (starts.isEmpty()) {
+            String v = text.trim();
+            if (!v.isBlank()) {
+                map.put("__ALL__", v);
+                System.out.println("Global answer: " + v);
+            }
+            System.out.println("===================================");
+            return map;
+        }
+
+        // Cắt từng đoạn đáp án theo a), b), ...
+        for (int i = 0; i < starts.size(); i++) {
+            int from = starts.get(i);
+            int to = (i + 1 < starts.size()) ? starts.get(i + 1) : text.length();
+
+            String seg = text.substring(from, to);
+            seg = P_SUBITEM_HEADER.matcher(seg).replaceFirst("").trim();
+
+            String letter = letters.get(i); // "a", "b", ...
+            if (!seg.isBlank()) {
+                map.put(letter, seg);
+                System.out.println(" ans[" + letter + "] = " + seg);
+            }
+        }
+
+        System.out.println("===================================");
+        return map;
+    }
+
 
     private boolean looksLikeDocHeader(String s) {
         if (s == null) return false;
@@ -587,9 +798,20 @@ public class ImportQuestionService {
         // B) cắt nhãn Answer (chưa phân loại)
         Matcher ansM = P_ANSWER_LABEL.matcher(work);
         String block = work;
-        String pendingAnswer = null;
+        boolean hasAnswerSection = false;
+        String mcAnswerRaw = null; // dùng cho MCQ
+
         if (ansM.find()) {
-            pendingAnswer = beautifyMath(sanitizeText(stripInlineMarkers(ansM.group(2).trim())));
+            hasAnswerSection = true;
+            // group(2) thường là phần sau "Đáp án:" trên cùng dòng -> đủ dùng cho MCQ
+            String g2 = null;
+            try {
+                g2 = ansM.group(2);
+            } catch (Exception ignore) { }
+            if (g2 != null) {
+                mcAnswerRaw = beautifyMath(sanitizeText(stripInlineMarkers(g2.trim())));
+            }
+            // bỏ phần Đáp án khỏi block nội dung
             block = block.substring(0, ansM.start()).trim();
         }
 
@@ -611,9 +833,40 @@ public class ImportQuestionService {
         b.difficulty = mapPoints(pts); // mặc định C nếu null
 
         // E) gán Answer đúng field
-        if (pendingAnswer != null) {
-            if (isMC) b.answer = pendingAnswer.toUpperCase(Locale.ROOT);
-            else      b.answerText = pendingAnswer;
+        if (hasAnswerSection) {
+            if (isMC) {
+                // MCQ: giữ cách cũ – dùng dòng sau "Đáp án:" (ví dụ "A", "AB")
+                if (mcAnswerRaw != null) {
+                    b.answer = mcAnswerRaw.toUpperCase(Locale.ROOT);
+                }
+            } else {
+                // ESSAY: dùng splitEssayAnswers để lấy đủ a), b), c) ... cho preview
+                Map<String, String> ansMapPreview = splitEssayAnswers(work);
+                if (!ansMapPreview.isEmpty()) {
+                    String ansText;
+                    if (ansMapPreview.size() == 1 && ansMapPreview.containsKey("__ALL__")) {
+                        // 1 đáp án chung cả câu
+                        ansText = ansMapPreview.get("__ALL__");
+                    } else {
+                        // ghép lại thành:
+                        // a) ...
+                        // b) ...
+                        StringBuilder sb = new StringBuilder();
+                        ansMapPreview.entrySet().stream()
+                                .filter(e -> !"__ALL__".equals(e.getKey()))
+                                .sorted(Map.Entry.comparingByKey()) // a,b,c,...
+                                .forEach(e -> {
+                                    if (sb.length() > 0) sb.append("\n");
+                                    sb.append(e.getKey()).append(") ").append(e.getValue());
+                                });
+                        ansText = sb.toString();
+                    }
+                    if (ansText != null) {
+                        ansText = beautifyMath(sanitizeText(stripInlineMarkers(ansText.trim())));
+                        b.answerText = ansText;
+                    }
+                }
+            }
         }
 
         // F) Parse theo loại
@@ -690,37 +943,6 @@ public class ImportQuestionService {
             if (!isHeading) out.append(line).append('\n');
         }
         return out.toString();
-    }
-
-    // ImportService (hoặc ImportRegex helper)
-    private SplitResult splitEssaySubitemsWithStem(String source) {
-        if (source == null) return new SplitResult(null, List.of());
-
-        // bóc {hl}, normalize y như cũ
-        String text = stripHlAndNormalize(source);
-        // bỏ dòng "Câu n ..."
-        text = P_HEADER_LINE.matcher(text).replaceFirst("");
-
-        // tìm vị trí các đầu mục a)/b)/...
-        Matcher m = P_SUBITEM_HEADER.matcher(text);
-        List<Integer> starts = new ArrayList<>();
-        while (m.find()) starts.add(m.start());
-
-        if (starts.size() < 2) return new SplitResult(null, List.of()); // không đủ để tạo bundle
-
-        // stem = phần trước ý đầu tiên
-        String stem = text.substring(0, starts.get(0)).trim();
-        // cắt từng ý như cũ
-        List<String> parts = new ArrayList<>();
-        for (int i = 0; i < starts.size(); i++) {
-            int from = starts.get(i);
-            int to = (i + 1 < starts.size()) ? starts.get(i + 1) : text.length();
-            String seg = text.substring(from, to);
-            seg = P_SUBITEM_HEADER.matcher(seg).replaceFirst("").trim();
-            if (!seg.isBlank()) parts.add(seg);
-        }
-        if (stem != null && stem.isBlank()) stem = null;
-        return new SplitResult(stem, parts);
     }
 
     private String cutPreludeBeforeFirstQuestion(String fullText) {

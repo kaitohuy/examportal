@@ -41,11 +41,15 @@ public class AutoPaperService {
     }
 
     /* ========= PREVIEW ========= */
-    public AutoGenPreviewResponse preview(Long subjectId, AutoGenRequest req) {
-        Objects.requireNonNull(req);
+    public AutoGenPreviewResponse preview(Long subjectId, AutoGenRequest req, AutoSettingKind kind) {
 
-        // Lấy setting theo subject
-        Optional<AutoPaperSetting> settingOpt = settingService.findBySubject(subjectId);
+        Objects.requireNonNull(req);
+        AutoSettingKind effectiveKind =
+                (kind == null ? AutoSettingKind.EXAM : kind);
+
+        // Lấy setting theo subject + kind
+        Optional<AutoPaperSetting> settingOpt =
+                settingService.findBySubject(subjectId, effectiveKind);
 
         // Variants: request > setting > 1
         int N = Math.max(
@@ -194,6 +198,10 @@ public class AutoPaperService {
         }
 
         return out;
+    }
+
+    public AutoGenPreviewResponse preview(Long subjectId, AutoGenRequest req) {
+        return preview(subjectId, req, AutoSettingKind.EXAM);
     }
 
     private BigDecimal handleSingleFull(Long subjectId, AutoGenSelectorDTO sel,
@@ -351,10 +359,14 @@ public class AutoPaperService {
 
     /* ========= COMMIT ========= */
     @Transactional
-    public AutoGenPreviewResponse commit(Long subjectId, AutoGenRequest req) {
-        return preview(subjectId, req);
+    public AutoGenPreviewResponse commit(Long subjectId, AutoGenRequest req, AutoSettingKind kind) {
+        return preview(subjectId, req, kind);
     }
 
+    @Transactional
+    public AutoGenPreviewResponse commit(Long subjectId, AutoGenRequest req) {
+        return commit(subjectId, req, AutoSettingKind.EXAM);
+    }
     /* ========= helpers ========= */
 
     private static AutoGenCellDTO emptyCell() {

@@ -218,4 +218,29 @@ public class UserServiceImpl implements UserService {
                 .map(userMapper::toDtoWithRoles)
                 .collect(Collectors.toList());
     }
+
+    @Override
+    public List<UserWithRolesAndDeptDTO> getTeachersByDepartment(Long deptId) {
+        List<User> users = userRepository.findByRoleAndDepartmentId(RoleType.TEACHER, deptId);
+        return users.stream()
+                .map(userMapper::toDtoWithDept)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public List<UserWithRolesAndDeptDTO> getTeachersOnly() {
+        List<User> users = userRepository.findByRole(RoleType.TEACHER);
+
+        return users.stream()
+                .map(userMapper::toDtoWithDept)
+                .filter(dto -> {
+                    // chỉ giữ user có đúng 1 role và role đó là TEACHER
+                    var roles = dto.getRoles();
+                    return roles != null
+                            && roles.size() == 1
+                            && roles.contains(RoleType.TEACHER);
+                })
+                .collect(Collectors.toList());
+    }
+
 }

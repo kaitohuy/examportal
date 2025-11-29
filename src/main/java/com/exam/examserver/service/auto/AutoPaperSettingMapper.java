@@ -2,6 +2,7 @@
 package com.exam.examserver.service.auto;
 
 import com.exam.examserver.dto.autogen.AutoPaperSettingDTO;
+import com.exam.examserver.enums.AutoSettingKind;
 import com.exam.examserver.model.exam.AutoPaperSetting;
 
 public final class AutoPaperSettingMapper {
@@ -18,6 +19,7 @@ public final class AutoPaperSettingMapper {
         d.noRepeatAcross = e.getNoRepeatAcross();
         d.notUsedYears = e.getNotUsedYears();
         d.steps = e.getSteps();
+        d.kind = e.getKind();
         return d;
     }
 
@@ -29,5 +31,6 @@ public final class AutoPaperSettingMapper {
         e.setNoRepeatAcross(d.noRepeatAcross);
         e.setNotUsedYears(d.notUsedYears == null ? 0 : d.notUsedYears);
         e.setSteps(d.steps);
+        e.setKind(d.kind == null ? AutoSettingKind.EXAM : d.kind);
     }
 }

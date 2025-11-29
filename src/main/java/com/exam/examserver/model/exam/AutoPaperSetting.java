@@ -2,6 +2,7 @@
 package com.exam.examserver.model.exam;
 
 import com.exam.examserver.dto.autogen.AutoGenStepDTO;
+import com.exam.examserver.enums.AutoSettingKind;
 import com.exam.examserver.enums.QuestionLabel;
 import jakarta.persistence.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -17,7 +18,9 @@ import java.util.Set;
 @Table(
         name = "auto_paper_setting",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uq_auto_paper_setting_subject", columnNames = {"subject_id"})
+                // (subject_id, kind) là duy nhất (mỗi môn có 1 bản EXAM và 1 bản PRACTICE)
+                @UniqueConstraint(name="uq_auto_paper_setting_subject_kind",
+                        columnNames = {"subject_id","kind"})
         }
 )
 public class AutoPaperSetting {
@@ -64,6 +67,10 @@ public class AutoPaperSetting {
     @Column(name="updated_at")
     private Instant updatedAt;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "kind", nullable = false, length = 16)
+    private AutoSettingKind kind = AutoSettingKind.EXAM;
+
     // getters/setters
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -96,4 +103,6 @@ public class AutoPaperSetting {
     public String getCreatedBy() { return createdBy; }
     public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
     public Instant getUpdatedAt() { return updatedAt; }
+    public AutoSettingKind getKind() { return kind; }
+    public void setKind(AutoSettingKind kind) { this.kind = kind; }
 }

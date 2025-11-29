@@ -85,5 +85,16 @@ public class UserController {
         return userService.getUserStatistics();
     }
 
+    @GetMapping("/teachers-by-dept/{deptId}")
+    public ResponseEntity<List<UserWithRolesAndDeptDTO>> getTeachersByDepartment(@PathVariable Long deptId) {
+        List<UserWithRolesAndDeptDTO> dtos = userService.getTeachersByDepartment(deptId);
+        return ResponseEntity.ok(dtos);
+    }
+
+    @GetMapping("/teachers-only")
+    public ResponseEntity<List<UserWithRolesAndDeptDTO>> getTeachersOnly() {
+        List<UserWithRolesAndDeptDTO> dtos = userService.getTeachersOnly();
+        return ResponseEntity.ok(dtos);
+    }
 }
 

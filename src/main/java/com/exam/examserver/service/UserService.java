@@ -27,4 +27,6 @@ public interface UserService {
     void toggleUserEnabled(Long id, Boolean enabled);
 
     UserWithRolesAndDeptDTO buildUserWithRolesAndDeptDTO(String username);
+    List<UserWithRolesAndDeptDTO> getTeachersByDepartment(Long deptId);
+    List<UserWithRolesAndDeptDTO> getTeachersOnly();
 }

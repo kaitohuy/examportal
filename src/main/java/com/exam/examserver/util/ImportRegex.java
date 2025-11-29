@@ -23,6 +23,15 @@ public final class ImportRegex {
     // 3) Gộp lại: "1."  HOẶC  "1.1 / 1.1.1"
     private static final String NUM_ANY = "(?:" + NUM_SIMPLE_DOT + "|" + NUM_HIER + ")";
 
+    // 3b) Prefix chữ cho câu hỏi: OT, NH, TC..., có thể có/không dấu chấm, có/không space
+    // Ví dụ match: "O.1.2", "OT.1.2", "NH1.1", "TC 2.3"
+    private static final String Q_PREFIX =
+            "(?:[A-Za-z]{1,3}\\.?\\s*)?";
+
+    private static final String Q_HEADER_NUMERIC_CORE =
+            Q_PREFIX + NUM_ANY;
+
+
     // 4) Toàn bộ header (nhánh chữ, 'q', và nhánh số)
     private static final String HEADER_CORE =
             "(?:" +
@@ -35,7 +44,7 @@ public final class ImportRegex {
                     "|" +
                     // Nhánh số: cho phép {hl} bao quanh số và cả quanh dấu ngăn
                     HL + "(?:" +
-                    "(?:" + HL + ")?" + NUM_ANY + "(?:" + HL + ")?" +
+                    "(?:" + HL + ")?" + Q_HEADER_NUMERIC_CORE + "(?:" + HL + ")?" +
                     "(?:" + HL + "[\\.)\\-:]" + HL + "\\s*|\\s+)" +
                     ")" +
                     ")";
@@ -107,11 +116,11 @@ public final class ImportRegex {
     public static final Pattern P_NUM_HEADER_LINE = Pattern.compile(
             "(?m)^\\s*(?:" +
                     // Có dấu ngăn (trong {hl} cũng được), có/không khoảng trắng sau đó
-                    "(?:" + HL + ")?" + NUM_ANY + "(?:" + HL + ")?" +
+                    "(?:" + HL + ")?" + Q_HEADER_NUMERIC_CORE + "(?:" + HL + ")?" +
                     "(?:" + HL + "[\\.)\\-:]" + HL + "\\s*)" +
                     "|" +
                     // Không có dấu ngăn: cần ít nhất 1 space sau số
-                    "(?:" + HL + ")?" + NUM_ANY + "(?:" + HL + ")?" + "\\s+" +
+                    "(?:" + HL + ")?" + Q_HEADER_NUMERIC_CORE + "(?:" + HL + ")?" + "\\s+" +
                     ")"
     );
 
@@ -136,9 +145,10 @@ public final class ImportRegex {
     );
 
     private static final Pattern P_NUM_CODE_HEAD = Pattern.compile(
-            "^\\s*(?:\\{/?hl\\}\\s*)*(" + NUM_ANY + ")\\s*(?:\\{/?hl\\}\\s*)*[\\.)\\-:]?\\s+",
+            "^\\s*(?:\\{/?hl\\}\\s*)*" + Q_PREFIX + "(" + NUM_ANY + ")\\s*(?:\\{/?hl\\}\\s*)*[\\.)\\-:]?\\s+",
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE | Pattern.MULTILINE
     );
+
 
     public static String extractNumericTypeCode(String block) {
         if (block == null) return null;
@@ -263,7 +273,8 @@ public final class ImportRegex {
 
         // 1) Nếu CHỈ là mã số (ví dụ "2.1.1." hoặc "2.1.1" hoặc "{hl}2.1{hl}"), coi như KHÔNG có đề chung
         //    (case này trước khi strip để bắt cả chuỗi "trần")
-        String onlyNumRegex = "^\\s*(?:\\{/?hl\\}\\s*)?" + NUM_ANY + "(?:\\s*(?:\\{/?hl\\}\\s*)*[\\.)\\-:]?)?\\s*$";
+        String onlyNumRegex = "^\\s*(?:\\{/?hl\\}\\s*)?" + Q_PREFIX + NUM_ANY +
+                "(?:\\s*(?:\\{/?hl\\}\\s*)*[\\.)\\-:]?)?\\s*$";
         if (t.matches(onlyNumRegex)) return null;
 
         // 2) Bỏ mã số đầu dòng (có thể có dấu ngăn & khoảng trắng sau)
