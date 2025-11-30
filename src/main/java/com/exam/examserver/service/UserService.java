@@ -29,4 +29,5 @@ public interface UserService {
     UserWithRolesAndDeptDTO buildUserWithRolesAndDeptDTO(String username);
     List<UserWithRolesAndDeptDTO> getTeachersByDepartment(Long deptId);
     List<UserWithRolesAndDeptDTO> getTeachersOnly();
+    List<UserWithRolesAndDeptDTO> getNonAdminUsers();
 }

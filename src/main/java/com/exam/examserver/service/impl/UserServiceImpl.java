@@ -243,4 +243,12 @@ public class UserServiceImpl implements UserService {
                 .collect(Collectors.toList());
     }
 
+    @Override
+    public List<UserWithRolesAndDeptDTO> getNonAdminUsers() {
+        List<User> users = userRepository.findUsersWithoutRole(RoleType.ADMIN);
+        return users.stream()
+                .map(userMapper::toDtoWithDept)
+                .collect(Collectors.toList());
+    }
+
 }

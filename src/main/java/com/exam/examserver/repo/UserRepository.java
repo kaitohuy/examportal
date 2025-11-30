@@ -77,4 +77,17 @@ public interface UserRepository extends JpaRepository<User, Long> {
   where r.roleName = :role
 """)
     List<User> findByRole(@Param("role") RoleType role);
+
+    @Query("""
+  select distinct u
+  from User u
+  where not exists (
+    select 1
+    from UserRole ur
+    join ur.role r
+    where ur.user = u
+      and r.roleName = :role
+  )
+""")
+    List<User> findUsersWithoutRole(@Param("role") RoleType role);
 }

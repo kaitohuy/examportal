@@ -96,5 +96,11 @@ public class UserController {
         List<UserWithRolesAndDeptDTO> dtos = userService.getTeachersOnly();
         return ResponseEntity.ok(dtos);
     }
+
+    @GetMapping("/non-admin")
+    public ResponseEntity<List<UserWithRolesAndDeptDTO>> getNonAdminUsers() {
+        List<UserWithRolesAndDeptDTO> dtos = userService.getNonAdminUsers();
+        return ResponseEntity.ok(dtos);
+    }
 }
 
