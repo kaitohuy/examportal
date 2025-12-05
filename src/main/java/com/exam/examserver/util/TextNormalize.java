@@ -103,11 +103,18 @@ public final class TextNormalize {
         putOnce(PUA_REMAP,'',"Σ");
         putOnce(PUA_REMAP,'',"Θ");
         putOnce(PUA_REMAP,'',"Ω");
+        putOnce(PUA_REMAP,'',"δ");   // small delta
+        putOnce(PUA_REMAP,'',"Δ");   // (delta hoa)
         putOnce(PUA_REMAP,'\uF0DB',"⇔");
         putOnce(PUA_REMAP, '\uF020', " "); //   (PUA space → space thường)
         putOnce(PUA_REMAP, '\uF028', "("); // 
         putOnce(PUA_REMAP, '\uF029', ")"); // 
         putOnce(PUA_REMAP, '\uF0C8', "∪"); //   (union)
+        putOnce(PUA_REMAP, '\uF0A5', "∞");   // ∞ giả thường gặp từ Word
+        putOnce(PUA_REMAP, '\uF0BE', "∞");
+        putOnce(PUA_REMAP, '\uF0C0', "∞");
+        putOnce(PUA_REMAP, '\uF020', " ");  // giữ space
+
 
         // một số ký hiệu chung
         putOnce(PUA_REMAP,'',"÷");
@@ -264,4 +271,17 @@ public final class TextNormalize {
         }
         return res;
     }
+
+    public static String normalizeTexDelimiters(String s) {
+        if (s == null) return null;
+
+        // display
+        s = s.replace("\\[", "$$").replace("\\]", "$$");
+
+        // inline
+        s = s.replace("\\(", "$").replace("\\)", "$");
+
+        return s;
+    }
+
 }

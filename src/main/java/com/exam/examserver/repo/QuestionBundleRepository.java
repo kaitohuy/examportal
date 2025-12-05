@@ -90,4 +90,14 @@ public interface QuestionBundleRepository extends JpaRepository<QuestionBundle, 
 
     @Query("select b.subject.id from QuestionBundle b where b.id = :id")
     Long findSubjectIdById(@Param("id") Long id);
+
+    @Query("""
+        select b.id, b.instructions
+        from QuestionBundle b
+          join BundleItem bi on bi.bundle.id = b.id
+        where bi.question.id = :questionId
+          and bi.isDeleted = false
+        order by bi.orderIndex asc
+        """)
+    List<Object[]> findBundleMetaByQuestionId(@Param("questionId") Long questionId);
 }

@@ -136,9 +136,16 @@ public class AnswerPackService {
 
                     rowsIds.add(qids);
                 }
+//                var header = new ExportQuestionService.ExamHeader(
+//                        "ĐÁP ÁN", "", "", "", "", "", "", "",
+//                        "", null, "", ""
+//                );
+//                byte[] docx = exportService.exportExamFromBlueprintWithAnswers(rowsIds, header);
+
+                // dùng paperNo = k+1 để in "ĐÁP ÁN ĐỀ SỐ X"
                 var header = new ExportQuestionService.ExamHeader(
-                        "ĐÁP ÁN", "", "", "", "", "", "", "",
-                        "", null, "", ""
+                        "", "", "", "", "", "", "", "",
+                        "", k + 1, "", ""
                 );
                 byte[] docx = exportService.exportExamFromBlueprintWithAnswers(rowsIds, header);
 

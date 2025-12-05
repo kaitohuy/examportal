@@ -9,7 +9,6 @@ import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 
 import java.util.List;
-
 @Mapper(componentModel = "spring", uses = {UserMapper.class})
 public interface QuestionMapper {
 
@@ -18,6 +17,10 @@ public interface QuestionMapper {
     @Mapping(target = "images", source = "images")
     @Mapping(target = "labels", source = "labels")
     @Mapping(target = "parentId", source = "parent.id")
+
+    // NEW – để service tự điền
+    @Mapping(target = "bundleId", ignore = true)
+    @Mapping(target = "bundleInstructions", ignore = true)
     QuestionDTO toDto(Question question);
 
     @Mapping(target = "id", ignore = true)
@@ -25,8 +28,14 @@ public interface QuestionMapper {
     @Mapping(target = "createdBy", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "images", ignore = true)
-    // labels map thẳng từ DTO (nếu null sẽ xử lý ở service)
     @Mapping(target = "labels", source = "labels")
+    @Mapping(target = "meta", ignore = true)
+    @Mapping(target = "quizQuestions", ignore = true)
+    @Mapping(target = "clones", ignore = true)
+    @Mapping(target = "bundleItems", ignore = true) // bundle set ở chỗ khác
+    @Mapping(target = "deleted", ignore = true)
+    @Mapping(target = "deletedAt", ignore = true)
+    @Mapping(target = "deletedBy", ignore = true)
     Question toEntity(CreateQuestionDTO dto);
 
     List<QuestionDTO> toDtoList(List<Question> questions);
@@ -34,7 +43,3 @@ public interface QuestionMapper {
     QuestionImageDTO toImageDto(QuestionImage image);
     List<QuestionImageDTO> toImageDtoList(List<QuestionImage> images);
 }
-
-
-
-

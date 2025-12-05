@@ -413,12 +413,22 @@ public class ExportQuestionService {
                     int idxInChap = inChapterCounter.merge(chapter, 1, Integer::sum);
                     title = chapter + "." + idxInChap;
                 } else {
-                    title = "Câu " + (++globalIdx);
+                    title = "Câu " + (++globalIdx) + ": ";
                 }
+//                String content = prettyMathSpaces(safeText(q.getContent()));
+//                String stem = stemMap.get(q.getId());
+//                if (stem != null && !stem.isBlank()) {
+//                    // chèn đầu mỗi ý khi export
+//                    content = stem + "\n" + content;
+//                }
+//                writeQuestionTitle(doc, title);
+//                writeContentSmart(doc, content);
+
                 String content = prettyMathSpaces(safeText(q.getContent()));
                 String stem = stemMap.get(q.getId());
                 if (stem != null && !stem.isBlank()) {
-                    // chèn đầu mỗi ý khi export
+                    // chuẩn hóa stem giống content để nếu có toán thì cũng lên đúng
+                    stem = prettyMathSpaces(safeText(stem));
                     content = stem + "\n" + content;
                 }
                 writeQuestionTitle(doc, title);
@@ -440,9 +450,14 @@ public class ExportQuestionService {
                 }
 
                 // Đáp án (nếu chọn)
+//                if (includeAnswers) {
+//                    String ans = (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE) ? q.getAnswer() : q.getAnswerText();
+//                    if (hasText(ans)) writeContentSmart(doc, "Đáp án: " + prettyMathSpaces(safeText(ans)));
+//                }
+
                 if (includeAnswers) {
                     String ans = (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE) ? q.getAnswer() : q.getAnswerText();
-                    if (hasText(ans)) writeContentSmart(doc, "Đáp án: " + prettyMathSpaces(safeText(ans)));
+                    writeAnswerSmart(doc, ans);
                 }
 
                 doc.createParagraph(); // spacer
@@ -481,12 +496,20 @@ public class ExportQuestionService {
             // ===== Nội dung câu hỏi (kiểu “Câu 1”, không theo chapter) =====
             int idx = 0;
             for (QuestionDTO q : questions) {
-                writeQuestionTitle(doc, "Câu " + (++idx));
+                writeQuestionTitle(doc, "Câu " + (++idx) + ": ");
+
+//                String content = prettyMathSpaces(safeText(q.getContent()));
+//                String stem = stemMap.get(q.getId());
+//                if (stem != null && !stem.isBlank()) {
+//                    // chèn đầu mỗi ý khi export
+//                    content = stem + "\n" + content;
+//                }
+//                writeContentSmart(doc, content);
 
                 String content = prettyMathSpaces(safeText(q.getContent()));
                 String stem = stemMap.get(q.getId());
                 if (stem != null && !stem.isBlank()) {
-                    // chèn đầu mỗi ý khi export
+                    stem = prettyMathSpaces(safeText(stem));
                     content = stem + "\n" + content;
                 }
                 writeContentSmart(doc, content);
@@ -504,9 +527,14 @@ public class ExportQuestionService {
                     writeOptionIfPresent(doc, "d) ", q.getOptionD());
                 }
 
+//                if (includeAnswers) {
+//                    String ans = (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE) ? q.getAnswer() : q.getAnswerText();
+//                    if (hasText(ans)) writeContentSmart(doc, "Đáp án: " + prettyMathSpaces(safeText(ans)));
+//                }
+
                 if (includeAnswers) {
                     String ans = (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE) ? q.getAnswer() : q.getAnswerText();
-                    if (hasText(ans)) writeContentSmart(doc, "Đáp án: " + prettyMathSpaces(safeText(ans)));
+                    writeAnswerSmart(doc, ans);
                 }
 
                 doc.createParagraph();
@@ -838,34 +866,42 @@ public class ExportQuestionService {
         return r;
     }
 
-    // writeContentSmart / writeOptionIfPresent giữ nguyên logic cũ,
-    // CHỈ lưu ý: runFactory set TNR 13 để đồng bộ
-//    private void writeContentSmart(XWPFDocument doc, String text) {
-//        if (text == null) text = "";
-//        for (String line : text.split("\\R", -1)) {
-//            XWPFParagraph p = doc.createParagraph();
-//            tuneParagraphSpacing(p);
-//            emitMathAware(p, line, (s) -> {
-//                XWPFRun r = p.createRun();
-//                r.setFontFamily("Times New Roman");
-//                r.setFontSize(13);
-//                return r;
-//            });
-//        }
-//    }
-
     private void writeContentSmart(XWPFDocument doc, String text) {
         if (text == null) text = "";
-        // CHỐT: gom các khối toán nhiều dòng thành 1 chunk
+
         for (String chunk : com.exam.examserver.util.MathOmmlRenderer.chunkByMathBlocks(text)) {
-            XWPFParagraph p = doc.createParagraph();
-            tuneParagraphSpacing(p);
-            emitMathAware(p, chunk, (s) -> {
-                XWPFRun r = p.createRun();
-                r.setFontFamily("Times New Roman");
-                r.setFontSize(13);
-                return r;
-            });
+            if (chunk == null || chunk.isEmpty()) continue;
+
+            String trimmed = chunk.trim();
+            boolean isMathBlock =
+                    trimmed.startsWith("$$")
+                            || trimmed.startsWith("\\[")
+                            || trimmed.startsWith("\\begin{");
+
+            if (isMathBlock) {
+                XWPFParagraph p = doc.createParagraph();
+                tuneParagraphSpacing(p);
+                p.setAlignment(ParagraphAlignment.CENTER);   // thêm dòng này để mọi block math lớn đều center
+                emitMathAware(p, chunk, s -> {
+                    XWPFRun r = p.createRun();
+                    r.setFontFamily("Times New Roman");
+                    r.setFontSize(13);
+                    return r;
+                });
+            } else {
+                String[] lines = chunk.split("\\R", -1);
+                for (String line : lines) {
+                    XWPFParagraph p = doc.createParagraph();
+                    tuneParagraphSpacing(p);
+                    // để mặc định LEFT cho text thường
+                    emitMathAware(p, line, s -> {
+                        XWPFRun r = p.createRun();
+                        r.setFontFamily("Times New Roman");
+                        r.setFontSize(13);
+                        return r;
+                    });
+                }
+            }
         }
     }
 
@@ -880,6 +916,65 @@ public class ExportQuestionService {
             r.setFontSize(13);
             return r;
         });
+    }
+
+    // In 1 dòng đáp án với "Đáp án:" đậm, nội dung nghiêng, vẫn đi qua emitMathAware
+    // In đáp án với "Đáp án:" đậm, nội dung nghiêng, GIỮ nguyên xuống dòng trong DB.
+    private void writeAnswerSmart(XWPFDocument doc, String rawAnswer) {
+        if (!hasText(rawAnswer)) return;
+
+        // ❌ Không dùng prettyMathSpaces ở đây nữa – nó gộp mất newline
+        // chỉ normalize ký tự + delimiter LaTeX nhưng GIỮ \n
+        String normalized = TextNormalize.normalizeTexDelimiters(
+                TextNormalize.normalizePreserveNewlines(rawAnswer)
+        );
+
+        // Tách theo mọi loại xuống dòng (\n, \r\n, …)
+        String[] lines = normalized.split("\\R", -1);
+
+        // Bỏ các dòng rỗng đầu (nếu có)
+        int firstIdx = 0;
+        while (firstIdx < lines.length && lines[firstIdx].isBlank()) firstIdx++;
+        if (firstIdx >= lines.length) return;    // toàn khoảng trắng
+
+        // ===== DÒNG ĐẦU: "Đáp án:" + nội dung dòng 1 =====
+        XWPFParagraph p0 = doc.createParagraph();
+        tuneParagraphSpacing(p0);
+
+        // Label "Đáp án:" đậm
+        XWPFRun label = p0.createRun();
+        label.setFontFamily("Times New Roman");
+        label.setFontSize(13);
+        label.setBold(true);
+        label.setText("Đáp án: ");
+
+        // Nội dung dòng đầu, in nghiêng, có xử lý toán
+        String firstLine = lines[firstIdx];
+        emitMathAware(p0, firstLine, s -> {
+            XWPFRun r = p0.createRun();
+            r.setFontFamily("Times New Roman");
+            r.setFontSize(13);
+            r.setItalic(true);
+            return r;
+        });
+
+        // ===== CÁC DÒNG TIẾP THEO: mỗi dòng 1 paragraph =====
+        for (int i = firstIdx + 1; i < lines.length; i++) {
+            String line = lines[i];
+            // nếu muốn giữ cả dòng trống thì bỏ if này
+            if (line == null || line.isBlank()) continue;
+
+            XWPFParagraph p = doc.createParagraph();
+            tuneParagraphSpacing(p);
+
+            emitMathAware(p, line, s -> {
+                XWPFRun r = p.createRun();
+                r.setFontFamily("Times New Roman");
+                r.setFontSize(13);
+                r.setItalic(true);
+                return r;
+            });
+        }
     }
 
     private void tuneParagraphSpacing(XWPFParagraph p) {
@@ -915,11 +1010,21 @@ public class ExportQuestionService {
         return out;
     }
 
+//    private String safeText(String s) {
+//        if (s == null) return "";
+//        String t = TextNormalize.remapPUA(s);
+//        t = TextNormalize.normalizePreserveNewlines(t);
+//        t = TextNormalize.normalizeSuperSubRuns(t);
+//        return t;
+//    }
+
     private String safeText(String s) {
         if (s == null) return "";
         String t = TextNormalize.remapPUA(s);
         t = TextNormalize.normalizePreserveNewlines(t);
         t = TextNormalize.normalizeSuperSubRuns(t);
+        //CHỖ MỚI: chuẩn hóa \(...\), \[...\] -> $...$, $$...$$
+        t = TextNormalize.normalizeTexDelimiters(t);
         return t;
     }
 
@@ -973,6 +1078,80 @@ public class ExportQuestionService {
             writeExamHeader(doc, header);
 
             // 2) Render từng hàng (“Câu i”)
+//            for (int i = 0; i < rowsIds.size(); i++) {
+//                List<Long> subIds = rowsIds.get(i);
+//                if (subIds == null || subIds.isEmpty()) continue;
+//
+//                BigDecimal totalPts = sumPointsOfQuestions(subIds);
+//                String ptsText = (totalPts != null && totalPts.compareTo(BigDecimal.ZERO) > 0)
+//                        ? " (" + fmtPoints(totalPts) + " điểm)" : "";
+//
+//                writeQuestionTitle(doc, "Câu " + (i + 1) + ptsText);
+//
+//                // chỉ lấy stem nếu có >= 2 ý
+////                String stemClean = null;
+////                if (subIds.size() >= 2) {
+////                    String stemRaw = stemMap.get(subIds.get(0));
+////                    if (stemRaw != null && !stemRaw.isBlank()) {
+////                        stemClean = normalizeStem(stemRaw); // đã loại "1.1", "2.1.7", dấu :
+////                    }
+////                }
+//                String stemClean = null;
+//                if (subIds.size() >= 2) {
+//                    String stemRaw = stemMap.get(subIds.get(0));
+//                    if (stemRaw != null && !stemRaw.isBlank()) {
+//                        // cho stem qua safeText để chuẩn hóa \(...\) -> $...$ trước
+//                        stemRaw = safeText(stemRaw);
+//                        stemClean = normalizeStem(stemRaw);
+//                    }
+//                }
+//
+//                final boolean hasStem = (stemClean != null && !stemClean.isBlank());
+//
+//                char mark = 'a';
+//
+//                for (int j = 0; j < subIds.size(); j++) {
+//                    Long qid = subIds.get(j);
+//                    QuestionDTO q = qById.get(qid);
+//                    if (q == null) continue;
+//
+//                    boolean multi = subIds.size() > 1;
+//                    String content = prettyMathSpaces(safeText(q.getContent()));
+//
+//                    if (multi && j == 0 && hasStem) {
+//                        // Dòng 1: "a) <stem>"
+//                        writeContentSmart(doc, String.valueOf(mark) + ") " + stemClean);
+//                        // Sau khi in stem, chuyển sang 'b' cho ý tiếp theo
+//                        mark++;
+//
+//                        // Dòng 2: nội dung ý a) căn giữa (không có tiền tố "a) ")
+//                        writeContentSmartAligned(doc, content, ParagraphAlignment.CENTER);
+//                    } else {
+//                        // Ý đơn hoặc các ý b), c), d)...
+//                        String prefix = multi ? (String.valueOf(mark) + ") ") : "";
+//                        writeContentSmart(doc, prefix + content);
+//                        if (multi) mark++; // tăng sau khi dùng
+//                    }
+//
+//                    // Ảnh (giữ nguyên)
+//                    if (q.getImages() != null && !q.getImages().isEmpty()) {
+//                        for (var img : q.getImages()) addWordImage(doc, img.getUrl());
+//                    } else if (q.getImageUrl() != null) {
+//                        addWordImage(doc, q.getImageUrl());
+//                    }
+//
+//                    // MCQ (giữ nguyên)
+//                    if (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE) {
+//                        String pad = (multi ? "   " : "");
+//                        writeOptionIfPresent(doc, pad + "a) ", q.getOptionA());
+//                        writeOptionIfPresent(doc, pad + "b) ", q.getOptionB());
+//                        writeOptionIfPresent(doc, pad + "c) ", q.getOptionC());
+//                        writeOptionIfPresent(doc, pad + "d) ", q.getOptionD());
+//                    }
+//                }
+//
+//                doc.createParagraph(); // khoảng cách giữa câu
+//            }
             for (int i = 0; i < rowsIds.size(); i++) {
                 List<Long> subIds = rowsIds.get(i);
                 if (subIds == null || subIds.isEmpty()) continue;
@@ -981,17 +1160,29 @@ public class ExportQuestionService {
                 String ptsText = (totalPts != null && totalPts.compareTo(BigDecimal.ZERO) > 0)
                         ? " (" + fmtPoints(totalPts) + " điểm)" : "";
 
-                writeQuestionTitle(doc, "Câu " + (i + 1) + ptsText);
+                // "Câu i (x điểm)"
+                writeQuestionTitle(doc, "Câu " + (i + 1) + ptsText + ": ");
 
-                // chỉ lấy stem nếu có >= 2 ý
-                String stemClean = null;
-                if (subIds.size() >= 2) {
-                    String stemRaw = stemMap.get(subIds.get(0));
-                    if (stemRaw != null && !stemRaw.isBlank()) {
-                        stemClean = normalizeStem(stemRaw); // đã loại "1.1", "2.1.7", dấu :
-                    }
+                boolean multi = subIds.size() > 1;
+
+                // ===== chỉ quan tâm stem nếu có >= 2 ý =====
+                List<String> stemsClean = multi
+                        ? computeCleanStems(subIds, stemMap)
+                        : Collections.nCopies(subIds.size(), null);
+
+                // tập các stem khác null
+                LinkedHashSet<String> distinct = new LinkedHashSet<>();
+                for (String s : stemsClean) {
+                    if (s != null && !s.isBlank()) distinct.add(s);
                 }
-                final boolean hasStem = (stemClean != null && !stemClean.isBlank());
+
+                boolean hasCommonStem = multi && distinct.size() == 1;
+                String commonStem = hasCommonStem ? distinct.iterator().next() : null;
+
+                // TH1: tất cả ý chung 1 stem -> in 1 lần sau "Câu 1"
+                if (hasCommonStem) {
+                    writeContentSmart(doc, commonStem);
+                }
 
                 char mark = 'a';
 
@@ -1000,34 +1191,38 @@ public class ExportQuestionService {
                     QuestionDTO q = qById.get(qid);
                     if (q == null) continue;
 
-                    boolean multi = subIds.size() > 1;
                     String content = prettyMathSpaces(safeText(q.getContent()));
 
-                    if (multi && j == 0 && hasStem) {
-                        // Dòng 1: "a) <stem>"
-                        writeContentSmart(doc, String.valueOf(mark) + ") " + stemClean);
-                        // Sau khi in stem, chuyển sang 'b' cho ý tiếp theo
-                        mark++;
-
-                        // Dòng 2: nội dung ý a) căn giữa (không có tiền tố "a) ")
-                        writeContentSmartAligned(doc, content, ParagraphAlignment.CENTER);
+                    if (multi && !hasCommonStem) {
+                        // TH2: mỗi ý có stem riêng (hoặc không có)
+                        String stemForThis = stemsClean.get(j);
+                        StringBuilder sb = new StringBuilder();
+                        sb.append(mark).append(") ");
+                        if (stemForThis != null && !stemForThis.isBlank()) {
+                            sb.append(stemForThis).append("\n");
+                        }
+                        sb.append(content);
+                        writeContentSmart(doc, sb.toString());
+                    } else if (multi) {
+                        // TH1: đã in stem chung rồi -> mỗi ý chỉ cần "a) nội dung"
+                        String line = mark + ") " + content;
+                        writeContentSmart(doc, line);
                     } else {
-                        // Ý đơn hoặc các ý b), c), d)...
-                        String prefix = multi ? (String.valueOf(mark) + ") ") : "";
-                        writeContentSmart(doc, prefix + content);
-                        if (multi) mark++; // tăng sau khi dùng
+                        // chỉ 1 ý trong câu -> giữ nguyên như trước
+                        writeContentSmart(doc, content);
                     }
+                    if (multi) mark++;
 
-                    // Ảnh (giữ nguyên)
+                    // Ảnh
                     if (q.getImages() != null && !q.getImages().isEmpty()) {
                         for (var img : q.getImages()) addWordImage(doc, img.getUrl());
                     } else if (q.getImageUrl() != null) {
                         addWordImage(doc, q.getImageUrl());
                     }
 
-                    // MCQ (giữ nguyên)
+                    // MCQ
                     if (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE) {
-                        String pad = (multi ? "   " : "");
+                        String pad = multi ? "   " : "";
                         writeOptionIfPresent(doc, pad + "a) ", q.getOptionA());
                         writeOptionIfPresent(doc, pad + "b) ", q.getOptionB());
                         writeOptionIfPresent(doc, pad + "c) ", q.getOptionC());
@@ -1035,7 +1230,7 @@ public class ExportQuestionService {
                     }
                 }
 
-                doc.createParagraph(); // khoảng cách giữa câu
+                doc.createParagraph(); // khoảng cách giữa các câu
             }
 
             // Footer
@@ -1220,29 +1415,126 @@ public class ExportQuestionService {
              ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
 
             // Header đề thi
-            writeExamHeader(doc, header);
+            //writeExamHeader(doc, header);
+            // ===== Header đơn giản cho file đáp án =====
+            if (header != null) {
+                XWPFParagraph p = doc.createParagraph();
+                p.setAlignment(ParagraphAlignment.CENTER);
+                // khoảng cách dưới header cho thoáng (after ~20pt)
+                setSpacing(p, 0, 400, 1.0);
+
+                XWPFRun r = newRun(p, true, 16);
+                Integer paperNo = header.paperNo();
+                if (paperNo != null) {
+                    r.setText("ĐÁP ÁN ĐỀ SỐ " + paperNo);
+                } else {
+                    r.setText("ĐÁP ÁN");
+                }
+            }
+
+//            for (int i = 0; i < rowsIds.size(); i++) {
+//                List<Long> subIds = rowsIds.get(i);
+//                if (subIds == null || subIds.isEmpty()) continue;
+//
+//                // Giữ tiêu đề câu như bản gốc
+//                BigDecimal totalPts = sumPointsOfQuestions(subIds);
+//                String ptsText = (totalPts != null && totalPts.compareTo(BigDecimal.ZERO) > 0)
+//                        ? " (" + fmtPoints(totalPts) + " điểm)" : "";
+//                writeQuestionTitle(doc, "Câu " + (i + 1) + ptsText);
+//
+//                char mark = 'a';
+//                for (int j = 0; j < subIds.size(); j++) {
+//                    Long qid = subIds.get(j);
+//                    QuestionDTO q = qById.get(qid);
+//                    if (q == null) continue;
+//
+//                    String content = prettyMathSpaces(safeText(q.getContent()));
+//                    String prefix = (subIds.size() > 1) ? (String.valueOf(mark) + ") ") : "";
+//                    writeContentSmart(doc, prefix + content);
+//                    if (subIds.size() > 1) mark++;
+//
+//                    if (q.getImages() != null && !q.getImages().isEmpty()) {
+//                        for (var imgDto : q.getImages()) addWordImage(doc, imgDto.getUrl());
+//                    } else if (q.getImageUrl() != null) {
+//                        addWordImage(doc, q.getImageUrl());
+//                    }
+//
+//                    if (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE) {
+//                        writeOptionIfPresent(doc, "   a) ", q.getOptionA());
+//                        writeOptionIfPresent(doc, "   b) ", q.getOptionB());
+//                        writeOptionIfPresent(doc, "   c) ", q.getOptionC());
+//                        writeOptionIfPresent(doc, "   d) ", q.getOptionD());
+//                    }
+//
+//                    // === CHÈN ĐÁP ÁN ===
+//                    String ans = (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE)
+//                            ? q.getAnswer()
+//                            : q.getAnswerText();
+//                    if (hasText(ans)) {
+//                        writeAnswerSmart(doc, ans);
+//                    }
+//                }
+//
+//                doc.createParagraph(); // spacer giữa các câu
+//            }
 
             for (int i = 0; i < rowsIds.size(); i++) {
                 List<Long> subIds = rowsIds.get(i);
                 if (subIds == null || subIds.isEmpty()) continue;
 
-                // Giữ tiêu đề câu như bản gốc
                 BigDecimal totalPts = sumPointsOfQuestions(subIds);
                 String ptsText = (totalPts != null && totalPts.compareTo(BigDecimal.ZERO) > 0)
                         ? " (" + fmtPoints(totalPts) + " điểm)" : "";
-                writeQuestionTitle(doc, "Câu " + (i + 1) + ptsText);
+                writeQuestionTitle(doc, "Câu " + (i + 1) + ptsText + ": ");
+
+                boolean multi = subIds.size() > 1;
+
+                List<String> stemsClean = multi
+                        ? computeCleanStems(subIds, stemMap)
+                        : Collections.nCopies(subIds.size(), null);
+
+                LinkedHashSet<String> distinct = new LinkedHashSet<>();
+                for (String s : stemsClean) {
+                    if (s != null && !s.isBlank()) distinct.add(s);
+                }
+                boolean hasCommonStem = multi && distinct.size() == 1;
+                String commonStem = hasCommonStem ? distinct.iterator().next() : null;
+
+                // TH1: in stem chung 1 lần sau "Câu i"
+                if (hasCommonStem) {
+                    writeContentSmart(doc, commonStem);
+                }
 
                 char mark = 'a';
+
                 for (int j = 0; j < subIds.size(); j++) {
                     Long qid = subIds.get(j);
                     QuestionDTO q = qById.get(qid);
                     if (q == null) continue;
 
                     String content = prettyMathSpaces(safeText(q.getContent()));
-                    String prefix = (subIds.size() > 1) ? (String.valueOf(mark) + ") ") : "";
-                    writeContentSmart(doc, prefix + content);
-                    if (subIds.size() > 1) mark++;
 
+                    if (multi && !hasCommonStem) {
+                        // TH2: stem riêng từng ý
+                        String stemForThis = stemsClean.get(j);
+                        StringBuilder sb = new StringBuilder();
+                        sb.append(mark).append(") ");
+                        if (stemForThis != null && !stemForThis.isBlank()) {
+                            sb.append(stemForThis).append("\n");
+                        }
+                        sb.append(content);
+                        writeContentSmart(doc, sb.toString());
+                    } else if (multi) {
+                        // TH1: chỉ in "a) nội dung"
+                        String line = mark + ") " + content;
+                        writeContentSmart(doc, line);
+                    } else {
+                        // 1 ý duy nhất
+                        writeContentSmart(doc, content);
+                    }
+                    if (multi) mark++;
+
+                    // Ảnh, MCQ giữ nguyên
                     if (q.getImages() != null && !q.getImages().isEmpty()) {
                         for (var imgDto : q.getImages()) addWordImage(doc, imgDto.getUrl());
                     } else if (q.getImageUrl() != null) {
@@ -1250,18 +1542,18 @@ public class ExportQuestionService {
                     }
 
                     if (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE) {
-                        writeOptionIfPresent(doc, "   a) ", q.getOptionA());
-                        writeOptionIfPresent(doc, "   b) ", q.getOptionB());
-                        writeOptionIfPresent(doc, "   c) ", q.getOptionC());
-                        writeOptionIfPresent(doc, "   d) ", q.getOptionD());
+                        writeOptionIfPresent(doc, multi ? "   a) " : "a) ", q.getOptionA());
+                        writeOptionIfPresent(doc, multi ? "   b) " : "b) ", q.getOptionB());
+                        writeOptionIfPresent(doc, multi ? "   c) " : "c) ", q.getOptionC());
+                        writeOptionIfPresent(doc, multi ? "   d) " : "d) ", q.getOptionD());
                     }
 
-                    // === CHÈN ĐÁP ÁN ===
+                    // === Đáp án cho từng ý ===
                     String ans = (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE)
                             ? q.getAnswer()
                             : q.getAnswerText();
                     if (hasText(ans)) {
-                        writeContentSmart(doc, "Đáp án: " + prettyMathSpaces(safeText(ans)));
+                        writeAnswerSmart(doc, ans);
                     }
                 }
 
@@ -1269,10 +1561,30 @@ public class ExportQuestionService {
             }
 
             // Footer (giữ nguyên)
-            writeExamFooter(doc);
+            //writeExamFooter(doc);
             finalizeDocx(doc);
             doc.write(baos);
             return baos.toByteArray();
         }
+    }
+
+    /** Chuẩn hóa stem cho từng câu trong 1 hàng (row blueprint) */
+    private List<String> computeCleanStems(List<Long> subIds, Map<Long, String> stemMap) {
+        List<String> out = new ArrayList<>(subIds.size());
+        for (Long qid : subIds) {
+            String raw = stemMap.get(qid);
+            String clean = null;
+            if (raw != null && !raw.isBlank()) {
+                // cho qua safeText + normalizeStem giống bên exportExamFromBlueprint cũ
+                raw = safeText(raw);
+                clean = normalizeStem(raw);
+                if (clean != null) {
+                    clean = clean.trim();
+                    if (clean.isBlank()) clean = null;
+                }
+            }
+            out.add(clean);   // có thể null
+        }
+        return out;
     }
 }

@@ -39,7 +39,7 @@ public final class MathOmmlRenderer {
             + "|\\\\begin\\{(p|b|B|v|V)matrix\\}.*?\\\\end\\{\\1matrix\\}" // matrix env
             + "|\\\\begin\\{cases\\}.*?\\\\end\\{cases\\}");            // cases
     // ------- LaTeX mới -------
-    private static final Pattern L_FRAC = Pattern.compile("\\\\frac\\{(.+?)\\}\\{(.+?)\\}");
+    private static final Pattern L_FRAC = Pattern.compile("\\\\frac\\{([^{}]*(?:\\{[^{}]*\\}[^{}]*)*)\\}\\{([^{}]*(?:\\{[^{}]*\\}[^{}]*)*)\\}");
     private static final Pattern L_SQRT = Pattern.compile("\\\\sqrt\\{(.+?)\\}");
     private static final Pattern L_ROOT = Pattern.compile("\\\\sqrt\\[(.+?)\\]\\{(.+?)\\}");
     private static final Pattern L_OVERLINE = Pattern.compile("\\\\overline\\{(.+?)\\}");
@@ -142,9 +142,26 @@ public final class MathOmmlRenderer {
                 "<m:bar><m:barPr><m:pos m:val=\"top\"/></m:barPr><m:e>" + mRun(e) + "</m:e></m:bar></m:oMath>";
     }
 
+    // a, b là LaTeX thô, ví dụ: "c_{i}", "a_{i}"
     private static String ommlFrac(String a, String b) {
-        return "<m:oMath xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\">" +
-                "<m:f><m:num>" + mRun(a) + "</m:num><m:den>" + mRun(b) + "</m:den></m:f></m:oMath>";
+        // Cho tử / mẫu đi qua parser inline để hiểu _{}, ^{}, sum, v.v.
+        String num = toOmmlInlineSeq(a);
+        String den = toOmmlInlineSeq(b);
+
+        // Fallback: nếu vì lý do nào đó không parse được, quay lại mRun + renderPlain cũ
+        if (num == null || num.isEmpty()) {
+            num = mRun(renderPlain(a));
+        }
+        if (den == null || den.isEmpty()) {
+            den = mRun(renderPlain(b));
+        }
+
+        return "<m:oMath xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\">"
+                + "<m:f>"
+                + "<m:num>" + num + "</m:num>"
+                + "<m:den>" + den + "</m:den>"
+                + "</m:f>"
+                + "</m:oMath>";
     }
 
     private static String ommlSqrt(String x) {
@@ -367,7 +384,10 @@ public final class MathOmmlRenderer {
                 + "|int_"
                 + "|overline\\()"
                 + ".*")) {
-            runFactory.apply(text).setText(text);
+
+            // NEW: map các macro đơn giản (\\infty, \\alpha, ...) sang Unicode
+            String plain = renderPlain(text);
+            runFactory.apply(plain).setText(plain);
             return;
         }
 
@@ -527,7 +547,8 @@ public final class MathOmmlRenderer {
         // 1C) LaTeX root, sqrt, frac, overline
         s = replaceWithOmml(p, s, L_ROOT, m -> ommlRoot(renderPlain(m.group(1)), renderPlain(m.group(2))), runFactory);
         s = replaceWithOmml(p, s, L_SQRT, m -> ommlSqrt(renderPlain(m.group(1))), runFactory);
-        s = replaceWithOmml(p, s, L_FRAC, m -> ommlFrac(renderPlain(m.group(1)), renderPlain(m.group(2))), runFactory);
+        s = replaceWithOmml(p, s, L_FRAC,
+                m -> ommlFrac(m.group(1), m.group(2)), runFactory);
         s = replaceWithOmml(p, s, L_OVERLINE, m -> ommlBarTop(renderPlain(m.group(1))), runFactory);
 
         // 1D) LaTeX n-ary operators
@@ -551,7 +572,8 @@ public final class MathOmmlRenderer {
         // 2) TeX-lite cũ
         s = replaceCasesWithOmml(p, s, runFactory);
         s = replaceWithOmml(p, s, P_OVERLINE, m -> ommlBarTop(renderPlain(m.group(1))), runFactory);
-        s = replaceWithOmml(p, s, P_FRAC, m -> ommlFrac(renderPlain(m.group(1)), renderPlain(m.group(2))), runFactory);
+        s = replaceWithOmml(p, s, P_FRAC,
+                m -> ommlFrac(m.group(1), m.group(2)), runFactory);
         s = replaceWithOmml(p, s, P_ROOT, m -> ommlRoot(renderPlain(m.group(1)), renderPlain(m.group(2))), runFactory);
         s = replaceWithOmml(p, s, P_SQRT, m -> ommlSqrt(renderPlain(m.group(1))), runFactory);
         s = replaceWithOmml(p, s, P_SUM, m -> ommlNary("∑", renderPlain(m.group(1)), renderPlain(m.group(2)), renderPlain(m.group(3))), runFactory);
@@ -579,9 +601,12 @@ public final class MathOmmlRenderer {
         }
     }
 
+    // Thay thế phần xử lý subscript/superscript trong toOmmlInlineSeq()
+// Tìm từ dòng 500 đến 550 trong MathOmmlRenderer.java
+
     /**
      * Chuyển đổi chuỗi TeX-lite inline thành chuỗi OMML elements (không bọc <m:oMath>)
-     * FIX: Xử lý đúng subscript/superscript với space và nội dung phức tạp
+     * FIX: Xử lý đúng subscript/superscript ngay cả khi không có base character
      */
     private static String toOmmlInlineSeq(String s) {
         StringBuilder out = new StringBuilder();
@@ -660,7 +685,34 @@ public final class MathOmmlRenderer {
                 }
             }
 
-            // --- SUBSCRIPT/SUPERSCRIPT LaTeX-style: x_{...} x^{...} ---
+            // ===== FIX: XỬ LÝ SUBSCRIPT/SUPERSCRIPT ĐỘC LẬP =====
+            // Không cần base character phía trước, xử lý trực tiếp _{...} hoặc ^{...}
+            if (i + 1 < n && (s.charAt(i) == '_' || s.charAt(i) == '^')) {
+                char op = s.charAt(i);
+                if (s.charAt(i + 1) == '{') {
+                    int j = findMatchingBrace(s, i + 2);
+                    if (j > 0) {
+                        flushPlain(text, out);
+                        String content = s.substring(i + 2, j).trim();
+                        String contentOmml = toOmmlInlineSeq(content);
+
+                        // Tạo element rỗng làm base (placeholder)
+                        if (op == '_') {
+                            out.append("<m:sSub><m:e>").append(mRun(""))
+                                    .append("</m:e><m:sub>").append(contentOmml)
+                                    .append("</m:sub></m:sSub>");
+                        } else {
+                            out.append("<m:sSup><m:e>").append(mRun(""))
+                                    .append("</m:e><m:sup>").append(contentOmml)
+                                    .append("</m:sup></m:sSup>");
+                        }
+                        i = j + 1;
+                        continue;
+                    }
+                }
+            }
+
+            // --- SUBSCRIPT/SUPERSCRIPT có base character: x_{...} x^{...} ---
             if (i + 1 < n && isBase(s.charAt(i)) && (s.charAt(i + 1) == '_' || s.charAt(i + 1) == '^')) {
                 char base = s.charAt(i);
                 int k = i + 1;

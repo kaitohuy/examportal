@@ -31,6 +31,7 @@ import java.util.*;
 import java.util.List;
 import java.util.regex.Pattern;
 
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTSym;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
@@ -448,6 +449,25 @@ public class DocxOmmlExtractor {
                 else sb.append(text);
             }
 
+            return;
+        }
+
+        /* --- NEW: Symbol run <w:sym w:font="Symbol" w:char="F064"> --- */
+        if (u instanceof R.Sym) {
+            R.Sym sym = (R.Sym) u;
+            String hex = sym.getChar();      // ví dụ "F064"
+            if (hex != null && !hex.isBlank()) {
+                try {
+                    int code = Integer.parseInt(hex, 16);  // 0xF064
+                    char ch = (char) code;                 // '' (PUA)
+                    String mapped = TextNormalize.remapPUA(String.valueOf(ch));
+                    if (mapped != null) {
+                        sb.append(mapped);                 // → "δ"
+                    }
+                } catch (NumberFormatException ignore) {
+                    // bỏ qua nếu char kỳ lạ
+                }
+            }
             return;
         }
 

@@ -188,4 +188,16 @@ public interface QuestionRepository extends JpaRepository<Question, Long>, JpaSp
     List<Question> findAllByQuestionCodeLowerIn(@Param("codesLower") Collection<String> codesLower);
 
     Optional<Question> findBySubjectIdAndQuestionCodeIgnoreCase(Long subjectId, String questionCode);
+
+    @Query("""
+   select q from Question q
+   where q.isDeleted = false
+     and q.subject.id = :subjectId
+     and lower(q.questionCode) like lower(concat(:baseCode, '%'))
+""")
+    List<Question> findBySubjectIdAndQuestionCodePrefix(
+            @Param("subjectId") Long subjectId,
+            @Param("baseCode") String baseCode
+    );
+
 }

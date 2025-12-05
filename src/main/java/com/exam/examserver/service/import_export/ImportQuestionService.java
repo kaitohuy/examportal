@@ -4,6 +4,7 @@ import com.exam.examserver.dto.exam.CreateQuestionDTO;
 import com.exam.examserver.dto.exam.QuestionDTO;
 import com.exam.examserver.dto.importing.*;
 import com.exam.examserver.enums.*;
+import com.exam.examserver.model.exam.Question;
 import com.exam.examserver.model.exam.QuestionBundle;
 import com.exam.examserver.repo.QuestionRepository;
 import com.exam.examserver.service.BundleService;
@@ -38,6 +39,7 @@ public class ImportQuestionService {
     private final FingerprintService fingerprintService;
     private final QuestionMetaService questionMetaService;
     private final BundleService bundleService;
+    private final Map<String, AnswerImportSession> answerImportSessions = new java.util.concurrent.ConcurrentHashMap<>();
     // ====== NEW: regex phục vụ footer + điểm ======
     private static final Pattern P_FOOTER =
             Pattern.compile("(?is)\\n?Ghi\\s*chú:.*?(?:\\z|\\n\\s*Họ\\s*tên\\s*SV:.*|\\n\\s*Ký\\s*tên:.*)");
@@ -529,6 +531,308 @@ public class ImportQuestionService {
 
         return new ImportResult(total, success, errors);
     }
+
+    // ============ IMPORT ĐÁP ÁN – PREVIEW ============
+
+    public AnswerImportPreviewResponse buildAnswerPreview(
+            Long subjectId,
+            MultipartFile file,
+            Set<QuestionLabel> defaultLabels
+    ) {
+        // 0) Extract text (bỏ qua ảnh)
+        String rawText;
+        try {
+            var extracted = extractTextAndImages(file);
+            rawText = extracted.getText();
+        } catch (Exception e) {
+            throw new RuntimeException("Cannot read DOCX/PDF", e);
+        }
+
+        // 1) Chuẩn hoá text giống hệt import câu hỏi
+        String cleaned = TextNormalize.normalizePreserveNewlines(rawText);
+        cleaned = compactHighlightMarkers(cleaned);
+        cleaned = breakChapterInline(cleaned);
+        cleaned = breakHeaderAnswerInline(cleaned);
+
+        // === LOẠI BỎ HOÀN TOÀN {hl}{/hl} ===
+        cleaned = cleaned.replaceAll("\\{/?hl\\}", "");
+
+        // === FIX BUG HEADER NGÂN HÀNG + TÊN HỌC PHẦN + CHƯƠNG ===
+        cleaned = removeSectionHeadingLines(cleaned);
+        cleaned = stripChapterHeader(cleaned);
+        cleaned = cutPreludeBeforeFirstQuestion(cleaned);
+
+        // 2) Tách block theo header số (2.2, 3.1.4, ...)
+        String[] rawBlocks = P_SPLIT_BY_HEADER.split(cleaned);
+        List<AnswerUpdatePreviewBlock> previewBlocks = new ArrayList<>();
+
+        // labels mặc định => quyết định prefix OT/NH
+        Set<QuestionLabel> defLabels = (defaultLabels == null || defaultLabels.isEmpty())
+                ? java.util.EnumSet.of(QuestionLabel.PRACTICE)
+                : java.util.EnumSet.copyOf(defaultLabels);
+
+        int idx = 0;
+
+        for (String raw : rawBlocks) {
+            String trimmed = raw.trim();
+            if (trimmed.isBlank()) continue;
+
+            // === UPDATE MỚI: BỎ QUA HOÀN TOÀN HEADER TÀI LIỆU (NGÂN HÀNG, TÊN HỌC PHẦN, TRƯỜNG, ĐỀ THI...) ===
+            if (looksLikeDocHeader(trimmed)) {
+                System.out.println("[ANSWER_IMPORT] Skipped document header block (length=" + trimmed.length() + ")");
+                continue;
+            }
+
+            AnswerUpdatePreviewBlock pb = new AnswerUpdatePreviewBlock();
+            pb.index = ++idx;
+
+            // Lưu raw đã được dọn sạch hoàn toàn để FE hiển thị đẹp
+            pb.raw = TextNormalize.normalizePreserveNewlines(trimmed)
+                    .replaceAll("\\s+", " ")
+                    .trim();
+
+            pb.valid = false;
+            pb.warnings = new ArrayList<>();
+            pb.targetQuestionIds = new LinkedHashMap<>();
+            pb.currentAnswers = new LinkedHashMap<>();
+            pb.newAnswers = new LinkedHashMap<>();
+            pb.include = true;
+
+            // 3) Lấy typeCode dạng số: "2.2", "3.1.4", ...
+            String typeCode = extractNumericTypeCode(trimmed);
+            pb.typeCode = typeCode;
+
+            if (typeCode == null) {
+                pb.warnings.add("Không tìm thấy mã câu hỏi dạng số (ví dụ 2.2, 3.1.4) ở đầu block.");
+                previewBlocks.add(pb);
+                continue;
+            }
+
+            // 4) Ghép thành baseCode: OT2.2 / NH2.2
+            String baseCode = buildCodeFromTypeCode(typeCode, defLabels);
+            pb.baseCode = baseCode;
+
+            // 5) Lấy danh sách câu hỏi trong DB có questionCode bắt đầu bằng baseCode
+            List<Question> questions = questionRepository.findBySubjectIdAndQuestionCodePrefix(subjectId, baseCode);
+
+            if (questions.isEmpty()) {
+                pb.warnings.add("Không tìm thấy câu hỏi nào trong DB có mã bắt đầu bằng: " + baseCode);
+                previewBlocks.add(pb);
+                continue;
+            }
+
+            // Tạm thời lấy questionType theo câu đầu
+            QuestionType qtype = questions.get(0).getQuestionType();
+            pb.questionType = qtype;
+
+            // 6) Tách phần đáp án trong block
+            if (qtype == QuestionType.MULTIPLE_CHOICE) {
+                Matcher m = P_ANSWER_LABEL.matcher(trimmed);
+                String mcAns = null;
+                if (m.find()) {
+                    String g2 = m.group(2);
+                    if (g2 != null) {
+                        mcAns = stripInlineMarkers(sanitizeText(g2.trim())).toUpperCase(Locale.ROOT);
+                    }
+                }
+
+                if (mcAns == null || mcAns.isBlank()) {
+                    pb.warnings.add("Không lấy được đáp án MC (dòng 'Đáp án: ...').");
+                    previewBlocks.add(pb);
+                    continue;
+                }
+
+                Question q = questions.get(0);
+                pb.targetQuestionIds.put("", q.getId());
+                pb.currentAnswers.put("", (q.getAnswer() == null ? "" : q.getAnswer()));
+                pb.newAnswers.put("", mcAns);
+                pb.valid = true;
+
+                previewBlocks.add(pb);
+                continue;
+            }
+
+            // ESSAY: lấy map đáp án (a, b, c, ..., hoặc "__ALL__")
+            Map<String, String> ansMap = splitEssayAnswers(trimmed);
+            if (ansMap.isEmpty()) {
+                pb.warnings.add("Không tìm thấy phần 'Đáp án:' hoặc nội dung đáp án trong block.");
+                previewBlocks.add(pb);
+                continue;
+            }
+
+            boolean hasLetterKey = ansMap.keySet().stream().anyMatch(k -> !"__ALL__".equals(k));
+
+            // CASE nhiều ý: NH2.2a), NH2.2b), ...
+            if (hasLetterKey) {
+                for (Map.Entry<String, String> e : ansMap.entrySet()) {
+                    String label = e.getKey();
+                    if ("__ALL__".equals(label)) continue;
+
+                    String newAns = e.getValue() != null ? e.getValue() : "";
+
+                    Question target = questions.stream()
+                            .filter(q -> {
+                                String qc = q.getQuestionCode();
+                                return qc != null && qc.toLowerCase(Locale.ROOT).endsWith(label.toLowerCase(Locale.ROOT) + ")");
+                            })
+                            .findFirst()
+                            .orElse(null);
+
+                    if (target == null) {
+                        pb.warnings.add("Không tìm thấy câu hỏi có mã kết thúc bằng '" + label + ")' (base: " + baseCode + ")");
+                        continue;
+                    }
+
+                    Long qid = target.getId();
+                    pb.targetQuestionIds.put(label, qid);
+                    pb.currentAnswers.put(label, target.getAnswerText() == null ? "" : target.getAnswerText());
+                    pb.newAnswers.put(label, newAns);
+                    pb.valid = true;
+                }
+
+                if (!pb.valid && pb.warnings.isEmpty()) {
+                    pb.warnings.add("Không ghép được đáp án nào với câu hỏi trong DB.");
+                }
+
+                previewBlocks.add(pb);
+                continue;
+            }
+
+            // CASE ESSAY 1 ý duy nhất
+            String global = ansMap.get("__ALL__");
+            if (global == null) {
+                pb.warnings.add("Không tìm thấy đáp án chung cho câu tự luận.");
+                previewBlocks.add(pb);
+                continue;
+            }
+
+            Question q = questions.get(0);
+            pb.targetQuestionIds.put("", q.getId());
+            pb.currentAnswers.put("", q.getAnswerText() == null ? "" : q.getAnswerText());
+            pb.newAnswers.put("", global);
+            pb.valid = true;
+
+            previewBlocks.add(pb);
+        }
+
+        // 7) Lưu session
+        String sessionId = java.util.UUID.randomUUID().toString();
+        AnswerImportSession session = new AnswerImportSession(sessionId, previewBlocks);
+        this.answerImportSessions.put(sessionId, session);
+
+        // 8) Response
+        AnswerImportPreviewResponse res = new AnswerImportPreviewResponse();
+        res.sessionId = sessionId;
+        res.blocks = previewBlocks;
+        res.totalBlocks = previewBlocks.size();
+        return res;
+    }
+
+    // ============ IMPORT ĐÁP ÁN – COMMIT ============
+
+    public AnswerImportResult commitAnswerImport(
+            Long subjectId,
+            Long userId,
+            AnswerImportCommitRequest req
+    ) {
+        if (req == null || req.sessionId == null) {
+            throw new IllegalArgumentException("Missing sessionId");
+        }
+
+        AnswerImportSession session = this.answerImportSessions.get(req.sessionId);
+        if (session == null) {
+            throw new IllegalArgumentException("Answer import session not found or expired");
+        }
+
+        // Map index -> previewBlock
+        Map<Integer, AnswerUpdatePreviewBlock> indexMap = new HashMap<>();
+        for (AnswerUpdatePreviewBlock b : session.blocks()) {
+            indexMap.put(b.index, b);
+        }
+
+        int total = 0;
+        int success = 0;
+        List<String> errors = new ArrayList<>();
+
+        if (req.blocks != null) {
+            // 🔁 DÙNG AnswerImportCommitBlock (không phải Request.Block)
+            for (AnswerImportCommitBlock cb : req.blocks) {
+                if (!cb.include) continue;   // user bỏ chọn
+                total++;
+
+                AnswerUpdatePreviewBlock pb = indexMap.get(cb.index);
+                if (pb == null) {
+                    errors.add("Block#" + cb.index + " không tồn tại trong session.");
+                    continue;
+                }
+
+                if (!pb.valid || pb.targetQuestionIds == null || pb.targetQuestionIds.isEmpty()) {
+                    errors.add("Block#" + cb.index + " không có câu hỏi nào hợp lệ để cập nhật.");
+                    continue;
+                }
+
+                try {
+                    // với mỗi key: "" (single) hoặc "a","b","c"...
+                    for (Map.Entry<String, Long> e : pb.targetQuestionIds.entrySet()) {
+                        String key = e.getKey();
+                        Long qid = e.getValue();
+                        if (qid == null) continue;
+
+                        var optQ = questionRepository.findById(qid);
+                        if (optQ.isEmpty()) {
+                            errors.add("Không tìm thấy câu hỏi id=" + qid + " (block#" + cb.index + ").");
+                            continue;
+                        }
+
+                        Question q = optQ.get();
+                        // kiểm tra đúng môn (an toàn)
+                        if (q.getSubject() == null || !q.getSubject().getId().equals(subjectId)) {
+                            errors.add("Câu hỏi id=" + qid + " không thuộc môn " + subjectId + " (block#" + cb.index + ").");
+                            continue;
+                        }
+
+                        String newAns = (pb.newAnswers != null ? pb.newAnswers.get(key) : null);
+                        if (newAns == null) newAns = "";
+
+                        if (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE) {
+                            q.setAnswer(newAns.trim().toUpperCase(Locale.ROOT));
+                        } else {
+                            q.setAnswerText(newAns.trim());
+                        }
+
+                        questionRepository.save(q);
+                    }
+
+                    success++;
+                } catch (Exception ex) {
+                    errors.add("Block#" + cb.index + " ERROR: " + ex.getMessage());
+                }
+            }
+        }
+
+        // Option: clear session sau commit
+        // this.answerImportSessions.remove(req.sessionId);
+
+        // ✅ Không dùng constructor, set field trực tiếp
+        AnswerImportResult result = new AnswerImportResult();
+        result.totalBlocks = total;       // số block được tick
+        result.totalQuestions = success;  // số câu hỏi thực sự update thành công
+        result.notFound = 0;              // nếu sau này muốn đếm riêng số câu không tìm thấy thì set ở trên
+        result.errors.addAll(errors);
+
+        return result;
+    }
+
+    private String buildCodeFromTypeCode(String typeCode, Set<QuestionLabel> labels) {
+        if (typeCode == null) return null;
+        Set<QuestionLabel> ls = (labels == null || labels.isEmpty())
+                ? java.util.EnumSet.of(QuestionLabel.PRACTICE)
+                : java.util.EnumSet.copyOf(labels);
+        String prefix = choosePrefix(ls); // OT / NH – đã có sẵn helper choosePrefix ở cuối file
+        return prefix + typeCode;
+    }
+
+
 
     // Bóc tag highlight + normalize NBSP trước khi tách
     private static String stripHlAndNormalize(String s) {

@@ -34,6 +34,9 @@ import org.springframework.web.multipart.MultipartFile;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import com.exam.examserver.dto.importing.AnswerImportPreviewResponse;
+import com.exam.examserver.dto.importing.AnswerImportCommitRequest;
+import com.exam.examserver.dto.importing.AnswerImportResult;
 
 @RestController
 @RequestMapping("/subject/{subjectId}/questions")
@@ -478,6 +481,31 @@ public class QuestionController {
             e.printStackTrace();
             throw e;
         }
+    }
+
+    // ====== IMPORT ĐÁP ÁN – PREVIEW ======
+    @PostMapping(
+            value = "/answers/import/preview",
+            consumes = MediaType.MULTIPART_FORM_DATA_VALUE
+    )
+    public AnswerImportPreviewResponse previewAnswers(
+            @PathVariable Long subjectId,
+            @RequestPart("file") MultipartFile file,
+            @RequestParam(name = "labels", required = false) Set<QuestionLabel> defaultLabels
+    ) {
+        // saveCopy cho đáp án thường không cần (chỉ cập nhật DB), nên mình để false
+        return importService.buildAnswerPreview(subjectId, file, defaultLabels);
+    }
+
+    // ====== IMPORT ĐÁP ÁN – COMMIT ======
+    @PostMapping("/answers/import/commit")
+    public AnswerImportResult commitAnswers(
+            @PathVariable Long subjectId,
+            @RequestBody AnswerImportCommitRequest req,
+            @AuthenticationPrincipal CustomUserDetails me
+    ) {
+        // userId hiện tại chưa dùng nhiều trong commitAnswerImport, nhưng mình vẫn truyền cho thống nhất
+        return importService.commitAnswerImport(subjectId, me.getId(), req);
     }
 
 }

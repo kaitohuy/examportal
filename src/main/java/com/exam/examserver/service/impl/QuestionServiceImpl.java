@@ -55,7 +55,14 @@ public class QuestionServiceImpl implements QuestionService {
                                SubjectRepository subjectRepo,
                                UserRepository userRepo,
                                QuestionMapper mapper,
-                               ImageStorageService imageStorageService, FingerprintService fingerprintService, QuestionImageRepository imageRepo, BundleItemRepository bundleItemRepo, QuestionBundleRepository bundleRepo, QuestionIssueRepository issueRepo, QuestionMetaRepository metaRepo, QuestionFingerprintRepository fpRepo) {
+                               ImageStorageService imageStorageService,
+                               FingerprintService fingerprintService,
+                               QuestionImageRepository imageRepo,
+                               BundleItemRepository bundleItemRepo,
+                               QuestionBundleRepository bundleRepo,
+                               QuestionIssueRepository issueRepo,
+                               QuestionMetaRepository metaRepo,
+                               QuestionFingerprintRepository fpRepo) {
         this.questionRepo = questionRepo;
         this.subjectRepo = subjectRepo;
         this.userRepo = userRepo;
@@ -70,6 +77,26 @@ public class QuestionServiceImpl implements QuestionService {
         this.fpRepo = fpRepo;
     }
 
+    /** Map Question -> DTO + gắn thêm bundleId / bundleInstructions nếu có */
+    private QuestionDTO mapToDtoWithBundle(Question q) {
+        if (q == null) return null;
+
+        QuestionDTO dto = mapper.toDto(q);
+
+        // Lấy bundle đầu tiên mà câu hỏi thuộc về (nếu có)
+        var rows = bundleRepo.findBundleMetaByQuestionId(q.getId());
+        if (rows != null && !rows.isEmpty()) {
+            Object[] first = rows.get(0); // [0]=bundleId, [1]=instructions
+            dto.setBundleId((Long) first[0]);
+            dto.setBundleInstructions((String) first[1]);
+        } else {
+            dto.setBundleId(null);
+            dto.setBundleInstructions(null);
+        }
+
+        return dto;
+    }
+
     @Override
     public List<QuestionDTO> findByIds(List<Long> questionIds) {
         if (questionIds == null || questionIds.isEmpty()) return Collections.emptyList();
@@ -78,7 +105,7 @@ public class QuestionServiceImpl implements QuestionService {
                 .collect(Collectors.toMap(Question::getId, q -> q));
         return questionIds.stream().map(map::get)
                 .filter(Objects::nonNull)
-                .map(mapper::toDto)
+                .map(this::mapToDtoWithBundle)
                 .collect(Collectors.toList());
     }
 
@@ -93,7 +120,7 @@ public class QuestionServiceImpl implements QuestionService {
             boolean deleted = (boolean) isDeletedField.get(q);
             if (deleted) throw new EntityNotFoundException("Question not found");
         } catch (NoSuchFieldException | IllegalAccessException ignore) {}
-        return mapper.toDto(q);
+        return mapToDtoWithBundle(q);
     }
 
     @Override
@@ -148,7 +175,7 @@ public class QuestionServiceImpl implements QuestionService {
         }
         Question persisted = questionRepo.save(saved);
         fingerprintService.upsert(persisted);
-        return mapper.toDto(persisted);
+        return mapToDtoWithBundle(persisted);
     }
 
     @Override
@@ -202,7 +229,7 @@ public class QuestionServiceImpl implements QuestionService {
 
         Question updated = questionRepo.save(q);
         fingerprintService.upsert(updated);
-        return mapper.toDto(updated);
+        return mapToDtoWithBundle(updated);
     }
 
     private List<String> storeImages(Long questionId, List<MultipartFile> files) {
@@ -297,7 +324,7 @@ public class QuestionServiceImpl implements QuestionService {
             Long subjectId = q.getSubject().getId();
             for (Long bid : affectedBundleIds) {
                 String stem = bundleRepo.findInstructionsById(bid);
-                List<Long> rawQids = bundleRepo.findActiveQuestionIdsInBundle (bid);
+                List<Long> rawQids = bundleRepo.findActiveQuestionIdsInBundle(bid);
                 // chỉ lấy các câu chưa bị xoá mềm
                 List<Question> activeQs = questionRepo.findByIdIn(rawQids);
                 List<String> parts = activeQs.stream().map(Question::getContent).toList();
@@ -332,7 +359,7 @@ public class QuestionServiceImpl implements QuestionService {
             Long subjectId = q.getSubject().getId();
             for (Long bid : affectedBundleIds) {
                 String stem = bundleRepo.findInstructionsById(bid);
-                List<Long> rawQids = bundleRepo.findActiveQuestionIdsInBundle (bid);
+                List<Long> rawQids = bundleRepo.findActiveQuestionIdsInBundle(bid);
                 List<Question> activeQs = questionRepo.findByIdIn(rawQids);
                 List<String> parts = activeQs.stream().map(Question::getContent).toList();
                 fingerprintService.rebuildBundleFP(bid, subjectId, stem, parts);
@@ -554,7 +581,7 @@ public class QuestionServiceImpl implements QuestionService {
             validateQuestionPayload(shadow);
 
             Question saved = questionRepo.save(clone);
-            out.add(mapper.toDto(saved));
+            out.add(mapToDtoWithBundle(saved));
         }
 
         return out;
@@ -566,7 +593,7 @@ public class QuestionServiceImpl implements QuestionService {
                 .orElseThrow(() -> new EntityNotFoundException("Question not found"));
         Long rootId = (parent.getParent() == null ? parent.getId() : parent.getParent().getId());
         Page<Question> page = questionRepo.findClonesByParentId(rootId, pageable);
-        return page.map(mapper::toDto);
+        return page.map(this::mapToDtoWithBundle);
     }
 
     @Override
@@ -589,7 +616,7 @@ public class QuestionServiceImpl implements QuestionService {
         );
 
         Page<Question> page = questionRepo.findAll(spec, pageable);
-        Page<QuestionDTO> pageDto = page.map(mapper::toDto);
+        Page<QuestionDTO> pageDto = page.map(this::mapToDtoWithBundle);
 
         // gắn cờ flagged theo batch (giữ nguyên)
         List<Long> ids = pageDto.getContent().stream().map(QuestionDTO::getId).toList();
@@ -606,7 +633,6 @@ public class QuestionServiceImpl implements QuestionService {
         Specification<Question> spec = Specification.allOf(
                 QuestionSpecs.subjectId(subjectId),
                 QuestionSpecs.isRootOnly(),
-                // ← THÊM LOGIC NÀY
                 (f.getDeletedOnly() != null && f.getDeletedOnly())
                         ? QuestionSpecs.deletedOnly()
                         : QuestionSpecs.notDeleted(),
@@ -672,7 +698,7 @@ public class QuestionServiceImpl implements QuestionService {
         );
 
         Page<Question> page = questionRepo.findAll(spec, pageable);
-        Page<QuestionDTO> pageDto = page.map(mapper::toDto);
+        Page<QuestionDTO> pageDto = page.map(this::mapToDtoWithBundle);
 
         // (Không cần gắn cờ flagged trong thùng rác — tuỳ bạn, có thể giữ nếu muốn)
         return pageDto;

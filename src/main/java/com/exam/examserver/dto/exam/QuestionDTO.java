@@ -34,6 +34,25 @@ public class QuestionDTO {
     private Long parentId;
     private Integer cloneIndex;
 
+    private Long bundleId;
+    private String bundleInstructions;
+
+    public Long getBundleId() {
+        return bundleId;
+    }
+
+    public void setBundleId(Long bundleId) {
+        this.bundleId = bundleId;
+    }
+
+    public String getBundleInstructions() {
+        return bundleInstructions;
+    }
+
+    public void setBundleInstructions(String bundleInstructions) {
+        this.bundleInstructions = bundleInstructions;
+    }
+
     public Long getSubjectId() {
         return subjectId;
     }
