@@ -181,7 +181,7 @@ public class FileArchiveService {
         if ("EXPORT".equalsIgnoreCase(kind) && fa.getReviewStatus() == null) {
             fa.setReviewStatus(storageKey.startsWith("tmp/") ? ReviewStatus.PENDING : ReviewStatus.APPROVED);
         }
-        if ("EXPORT".equalsIgnoreCase(kind) && meta != null) {                 // <-- thêm block giống (A)
+        if (meta != null) {                 // <-- thêm block giống (A)
             String v = String.valueOf(meta.getOrDefault("variant", "")).toUpperCase();
             if ("EXAM".equals(v))           fa.setVariant(ArchiveVariant.EXAM);
             else if ("PRACTICE".equals(v))  fa.setVariant(ArchiveVariant.PRACTICE);
@@ -434,7 +434,7 @@ public class FileArchiveService {
         }
         try {
             Map<String,Object> meta = (fa.getMetaJson()==null || fa.getMetaJson().isBlank())
-                    ? new java.util.LinkedHashMap<>()
+                    ? new LinkedHashMap<>()
                     : om.readValue(fa.getMetaJson(), new TypeReference<Map<String,Object>>() {});
             if (releaseAt == null) meta.put("releaseAt", null);
             else meta.put("releaseAt", releaseAt.toString()); // ISO-8601 UTC

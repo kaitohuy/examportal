@@ -2,6 +2,7 @@ package com.exam.examserver.dto.exam;
 
 
 import com.exam.examserver.enums.Difficulty;
+import com.exam.examserver.enums.ItemNature;
 import com.exam.examserver.enums.QuestionLabel;
 import com.exam.examserver.enums.QuestionType;
 
@@ -21,6 +22,24 @@ public class CreateQuestionDTO {
     private String imageUrl; // Cho câu hỏi hình ảnh
     private Set<QuestionLabel> labels;
     private Long parentId;
+    private String typeCode;
+    private ItemNature itemNature;
+
+    public String getTypeCode() {
+        return typeCode;
+    }
+
+    public void setTypeCode(String typeCode) {
+        this.typeCode = typeCode;
+    }
+
+    public ItemNature getItemNature() {
+        return itemNature;
+    }
+
+    public void setItemNature(ItemNature itemNature) {
+        this.itemNature = itemNature;
+    }
 
     public Long getParentId() {
         return parentId;

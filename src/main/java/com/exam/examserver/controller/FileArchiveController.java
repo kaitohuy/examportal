@@ -75,6 +75,152 @@ public class FileArchiveController {
     }
 
     // ================= LIST + FILTER =================
+//    @GetMapping
+//    public PageDTO<FileArchiveDTO> list(
+//            @RequestParam(required = false) Long subjectId,
+//            @RequestParam(defaultValue = "0") int page,
+//            @RequestParam(defaultValue = "20") int size,
+//            @RequestParam(required = false) String kind,      // IMPORT/EXPORT/SUBMISSION
+//            @RequestParam(required = false) String q,
+//            @RequestParam(required = false) String subject,
+//            @RequestParam(required = false) String uploader,
+//            @RequestParam(required = false) String from,
+//            @RequestParam(required = false) String to,
+//            @RequestParam(required = false) String variant,   // EXAM | PRACTICE | ANSWER
+//            @RequestParam(required = false) String reviewStatus,
+//            @RequestParam(required = false) Long linkedTaskId,
+//            @RequestParam(required = false) String viewMode
+//    ) {
+//        size = Math.min(Math.max(size, 1), 100);
+//        Pageable p = PageRequest.of(page, size,
+//                Sort.by(Sort.Direction.DESC, "reviewedAt", "createdAt"));
+//
+//        final String qq = norm(q);
+//        final String kk = norm(kind);
+//        final String sq = norm(subject);
+//        final String uq = norm(uploader);
+//        final Instant fromTs = parseDateStart(from);
+//        final Instant toTs   = parseDateEnd(to);
+//
+//        // ---- parse variant (final cho lambda)
+//        ArchiveVariant favTmp = null;
+//        if (variant != null && !variant.isBlank()) {
+//            try { favTmp = ArchiveVariant.valueOf(variant.trim().toUpperCase()); } catch (Exception ignore) {}
+//        }
+//        final ArchiveVariant fav = favTmp;
+//
+//        // ---- parse reviewStatus: hỗ trợ CSV như "APPROVED,REJECTED"
+//        Set<ReviewStatus> frsSetTmp = null;
+//        if (reviewStatus != null && !reviewStatus.isBlank()) {
+//            frsSetTmp = Arrays.stream(reviewStatus.split("[,;]"))
+//                    .map(String::trim)
+//                    .filter(s -> !s.isEmpty())
+//                    .map(s -> {
+//                        try { return ReviewStatus.valueOf(s.toUpperCase()); }
+//                        catch (Exception ignore) { return null; }
+//                    })
+//                    .filter(Objects::nonNull)
+//                    .collect(Collectors.toCollection(() -> EnumSet.noneOf(ReviewStatus.class)));
+//        }
+//        final Set<ReviewStatus> frsSet = (frsSetTmp != null && !frsSetTmp.isEmpty()) ? EnumSet.copyOf(frsSetTmp) : null;
+//
+//        // ---- id lists cho search theo text
+//        final List<Long> subjIds = (sq != null) ? subjectRepo.searchIdsByKeyword(sq) : null;
+//        if (subjIds != null && subjIds.isEmpty()) return PageDTO.from(Page.empty(p));
+//
+//        final List<Long> usrIds  = (uq != null) ? userRepo.searchIdsByKeyword(uq)  : null;
+//        if (usrIds != null && usrIds.isEmpty())  return PageDTO.from(Page.empty(p));
+//
+//        String vm = norm(viewMode);
+//        Specification<FileArchive> spec = scopeSpec(vm);
+//        List<Specification<FileArchive>> specs = new ArrayList<>();
+//        if (linkedTaskId != null) {
+//            var optTask = taskRepository.findById(linkedTaskId);
+//            if (optTask.isEmpty() || optTask.get().getSubmissionArchiveId() == null) {
+//                return PageDTO.from(Page.empty(p)); // chưa nộp gì -> rỗng
+//            }
+//            Long archiveId = optTask.get().getSubmissionArchiveId();
+//            specs.add((root, cq, cb) -> cb.equal(root.get("id"), archiveId));
+//            // tuỳ chọn, “chắc kèo”:
+//            specs.add((root, cq, cb) -> cb.equal(cb.upper(root.get("kind")), "SUBMISSION"));
+//            // nếu muốn tự ép Pending ở BE khi có linkedTaskId (không bắt buộc):
+//            // specs.add((root, cq, cb) -> cb.equal(root.get("reviewStatus"), ReviewStatus.PENDING));
+//        }
+//        if (subjectId != null) specs.add((root, cq, cb) -> cb.equal(root.get("subjectId"), subjectId));
+//        if (subjIds != null)   specs.add((root, cq, cb) -> root.get("subjectId").in(subjIds));
+//        if (kk != null)        specs.add((root, cq, cb) -> cb.equal(root.get("kind"), kk));
+//        if (fav != null) {
+//            specs.add((root, cq, cb) -> cb.equal(root.get("variant"), fav));
+//            if (kk == null) specs.add((root, cq, cb) -> cb.equal(root.get("kind"), "EXPORT"));
+//        }
+//        if (frsSet != null)    specs.add((root, cq, cb) -> root.get("reviewStatus").in(frsSet));
+//        if (qq != null)        specs.add((root, cq, cb) -> cb.like(cb.lower(root.get("filename")), "%" + qq.toLowerCase() + "%"));
+//        if (usrIds != null)    specs.add((root, cq, cb) -> root.get("userId").in(usrIds));
+//        if (fromTs != null)    specs.add((root, cq, cb) -> cb.greaterThanOrEqualTo(root.get("createdAt"), fromTs));
+//        if (toTs != null)      specs.add((root, cq, cb) -> cb.lessThan(root.get("createdAt"), toTs));
+//
+//        for (var s : specs) spec = spec.and(s);
+//        Page<FileArchive> rs = fileRepo.findAll(spec, p);
+//
+//        // ---- batch resolve names
+//        Set<Long> uids = rs.getContent().stream()
+//                .map(FileArchive::getUserId).filter(Objects::nonNull).collect(Collectors.toSet());
+//        Map<Long, String> uploaderMap = uids.isEmpty() ? Map.of()
+//                : userRepo.findAllById(uids).stream()
+//                .collect(Collectors.toMap(User::getId, FileArchiveController::displayName));
+//
+//        Set<Long> sids = rs.getContent().stream()
+//                .map(FileArchive::getSubjectId).filter(Objects::nonNull).collect(Collectors.toSet());
+//        Map<Long, String> subjectMap = sids.isEmpty() ? Map.of()
+//                : subjectRepo.findAllById(sids).stream()
+//                .collect(Collectors.toMap(Subject::getId, s -> {
+//                    String code = s.getCode() == null ? "" : s.getCode().trim();
+//                    String name = s.getName() == null ? "" : s.getName().trim();
+//                    return (code.isBlank() ? "" : code)
+//                            + (code.isBlank() || name.isBlank() ? "" : " - ")
+//                            + (name.isBlank() ? "" : name);
+//                }));
+//
+//        Set<Long> reviewerIds = rs.getContent().stream()
+//                .map(FileArchive::getReviewedById).filter(Objects::nonNull).collect(Collectors.toSet());
+//        Map<Long, String> reviewerMap = reviewerIds.isEmpty() ? Map.of()
+//                : userRepo.findAllById(reviewerIds).stream()
+//                .collect(Collectors.toMap(User::getId, FileArchiveController::displayName));
+//
+//        Set<Long> faIds = rs.getContent().stream().map(FileArchive::getId).collect(Collectors.toSet());
+//        Map<Long, ExamTask> linkMap = faIds.isEmpty() ? Map.of()
+//                : taskRepository.findAllBySubmissionArchiveIdIn(faIds).stream()
+//                .collect(Collectors.toMap(ExamTask::getSubmissionArchiveId, t -> t));
+//
+//        Page<FileArchiveDTO> mapped = rs.map(f -> {
+//            Long uid = f.getUserId();
+//            Long sid = f.getSubjectId();
+//            Long rid = f.getReviewedById();
+//
+//            String uploaderNameSafe  = (uid != null) ? uploaderMap.getOrDefault(uid, "User #" + uid) : "";
+//            String subjectNameSafe   = (sid != null) ? subjectMap.getOrDefault(sid, "") : "";
+//            String reviewedByNameSafe= (rid != null) ? reviewerMap.getOrDefault(rid, "") : "";
+//            ExamTask linked = linkMap.get(f.getId());
+//            Long linkedTaskIdOut = (linked != null ? linked.getId() : null);
+//            String linkedTaskStatus = (linked != null && linked.getStatus()!=null) ? linked.getStatus().name() : null;
+//
+//            return new FileArchiveDTO(
+//                    f.getId(), f.getFilename(), f.getMimeType(), f.getSizeBytes(), f.getKind(),
+//                    f.getSubjectId(), f.getUserId(), f.getCreatedAt(),
+//                    uploaderNameSafe,
+//                    subjectNameSafe,
+//                    f.getVariant() == null ? null : f.getVariant().name(),
+//                    f.getReviewStatus() == null ? null : f.getReviewStatus().name(),
+//                    f.getReviewNote(), f.getReviewDeadline(),
+//                    f.getReviewedAt(), f.getReviewedById(), reviewedByNameSafe,
+//                    linkedTaskIdOut, linkedTaskStatus,
+//                    parseReleaseAtFromMeta(f)
+//            );
+//        });
+//
+//        return PageDTO.from(mapped);
+//    }
+
     @GetMapping
     public PageDTO<FileArchiveDTO> list(
             @RequestParam(required = false) Long subjectId,
@@ -88,7 +234,9 @@ public class FileArchiveController {
             @RequestParam(required = false) String to,
             @RequestParam(required = false) String variant,   // EXAM | PRACTICE | ANSWER
             @RequestParam(required = false) String reviewStatus,
-            @RequestParam(required = false) Long linkedTaskId
+            @RequestParam(required = false) Long linkedTaskId,
+            // [NEW] Thêm tham số view: "me" hoặc "subject"
+            @RequestParam(defaultValue = "me") String view
     ) {
         size = Math.min(Math.max(size, 1), 100);
         Pageable p = PageRequest.of(page, size,
@@ -101,14 +249,14 @@ public class FileArchiveController {
         final Instant fromTs = parseDateStart(from);
         final Instant toTs   = parseDateEnd(to);
 
-        // ---- parse variant (final cho lambda)
+        // ---- parse variant
         ArchiveVariant favTmp = null;
         if (variant != null && !variant.isBlank()) {
             try { favTmp = ArchiveVariant.valueOf(variant.trim().toUpperCase()); } catch (Exception ignore) {}
         }
         final ArchiveVariant fav = favTmp;
 
-        // ---- parse reviewStatus: hỗ trợ CSV như "APPROVED,REJECTED"
+        // ---- parse reviewStatus
         Set<ReviewStatus> frsSetTmp = null;
         if (reviewStatus != null && !reviewStatus.isBlank()) {
             frsSetTmp = Arrays.stream(reviewStatus.split("[,;]"))
@@ -130,19 +278,19 @@ public class FileArchiveController {
         final List<Long> usrIds  = (uq != null) ? userRepo.searchIdsByKeyword(uq)  : null;
         if (usrIds != null && usrIds.isEmpty())  return PageDTO.from(Page.empty(p));
 
-        Specification<FileArchive> spec = scopeSpec();
+        // [UPDATED] Truyền tham số view vào scopeSpec
+        Specification<FileArchive> spec = scopeSpec(view);
+
         List<Specification<FileArchive>> specs = new ArrayList<>();
         if (linkedTaskId != null) {
             var optTask = taskRepository.findById(linkedTaskId);
             if (optTask.isEmpty() || optTask.get().getSubmissionArchiveId() == null) {
-                return PageDTO.from(Page.empty(p)); // chưa nộp gì -> rỗng
+                return PageDTO.from(Page.empty(p));
             }
             Long archiveId = optTask.get().getSubmissionArchiveId();
             specs.add((root, cq, cb) -> cb.equal(root.get("id"), archiveId));
-            // tuỳ chọn, “chắc kèo”:
+            // Tuỳ chọn: đảm bảo chỉ lấy SUBMISSION
             specs.add((root, cq, cb) -> cb.equal(cb.upper(root.get("kind")), "SUBMISSION"));
-            // nếu muốn tự ép Pending ở BE khi có linkedTaskId (không bắt buộc):
-            // specs.add((root, cq, cb) -> cb.equal(root.get("reviewStatus"), ReviewStatus.PENDING));
         }
         if (subjectId != null) specs.add((root, cq, cb) -> cb.equal(root.get("subjectId"), subjectId));
         if (subjIds != null)   specs.add((root, cq, cb) -> root.get("subjectId").in(subjIds));
@@ -160,7 +308,7 @@ public class FileArchiveController {
         for (var s : specs) spec = spec.and(s);
         Page<FileArchive> rs = fileRepo.findAll(spec, p);
 
-        // ---- batch resolve names
+        // ---- batch resolve names (Giữ nguyên logic cũ)
         Set<Long> uids = rs.getContent().stream()
                 .map(FileArchive::getUserId).filter(Objects::nonNull).collect(Collectors.toSet());
         Map<Long, String> uploaderMap = uids.isEmpty() ? Map.of()
@@ -463,37 +611,72 @@ public class FileArchiveController {
         return null;
     }
 
-    private Specification<FileArchive> scopeSpec() {
+//    private Specification<FileArchive> scopeSpec(String viewMode) {
+//        var scope = scopeResolver.resolveByUsername(currentUsername());
+//
+//        // ADMIN: full access
+//        if (scope.all) {
+//            return (root, cq, cb) -> cb.conjunction();
+//        }
+//
+//        // TEACHER: xem file của mình + file ANSWER APPROVED trong subject của họ
+//        if (scope.onlyUserId != null) {
+//            return (root, cq, cb) -> {
+//                // Điều kiện 1: File do chính mình tạo
+//                var ownFiles = cb.equal(root.get("userId"), scope.onlyUserId);
+//
+//                // Điều kiện 2: File ANSWER APPROVED trong subject mà teacher tham gia
+//                var teacherSubjects = scope.subjectIds;
+//                if (teacherSubjects != null && !teacherSubjects.isEmpty()) {
+//                    var answerInMySubjects = cb.and(
+//                            cb.equal(root.get("variant"), ArchiveVariant.ANSWER),
+//                            cb.equal(root.get("reviewStatus"), ReviewStatus.APPROVED),
+//                            root.get("subjectId").in(teacherSubjects)
+//                    );
+//                    return cb.or(ownFiles, answerInMySubjects);
+//                }
+//
+//                // Nếu teacher không được assign subject nào -> chỉ thấy file của mình
+//                return ownFiles;
+//            };
+//        }
+//
+//        // HEAD: xem file trong phạm vi department
+//        var sids = scope.subjectIds;
+//        if (sids == null || sids.isEmpty()) {
+//            return (root, cq, cb) -> cb.disjunction();
+//        }
+//        return (root, cq, cb) -> root.get("subjectId").in(sids);
+//    }
+
+    // [UPDATED] Logic phân quyền và view
+    private Specification<FileArchive> scopeSpec(String viewMode) {
         var scope = scopeResolver.resolveByUsername(currentUsername());
 
-        // ADMIN: full access
+        // 1. ADMIN: full access
         if (scope.all) {
             return (root, cq, cb) -> cb.conjunction();
         }
 
-        // TEACHER: xem file của mình + file ANSWER APPROVED trong subject của họ
+        // 2. TEACHER (có userId trong scope)
         if (scope.onlyUserId != null) {
-            return (root, cq, cb) -> {
-                // Điều kiện 1: File do chính mình tạo
-                var ownFiles = cb.equal(root.get("userId"), scope.onlyUserId);
-
-                // Điều kiện 2: File ANSWER APPROVED trong subject mà teacher tham gia
-                var teacherSubjects = scope.subjectIds;
-                if (teacherSubjects != null && !teacherSubjects.isEmpty()) {
-                    var answerInMySubjects = cb.and(
-                            cb.equal(root.get("variant"), ArchiveVariant.ANSWER),
-                            cb.equal(root.get("reviewStatus"), ReviewStatus.APPROVED),
-                            root.get("subjectId").in(teacherSubjects)
-                    );
-                    return cb.or(ownFiles, answerInMySubjects);
+            // Nếu người dùng muốn xem "Theo học phần" (Tất cả file trong các môn mình dạy)
+            if ("subject".equalsIgnoreCase(viewMode)) {
+                var sids = scope.subjectIds;
+                if (sids == null || sids.isEmpty()) {
+                    // Không dạy môn nào -> không thấy gì
+                    return (root, cq, cb) -> cb.disjunction();
                 }
+                // Lọc: subjectId IN (my_teaching_subjects)
+                return (root, cq, cb) -> root.get("subjectId").in(sids);
+            }
 
-                // Nếu teacher không được assign subject nào -> chỉ thấy file của mình
-                return ownFiles;
-            };
+            // Mặc định "me": Chỉ xem file của chính mình
+            return (root, cq, cb) -> cb.equal(root.get("userId"), scope.onlyUserId);
         }
 
-        // HEAD: xem file trong phạm vi department
+        // 3. HEAD (Trưởng bộ môn)
+        // HEAD xem theo phạm vi Subject thuộc Department (không dùng view="me" vì quản lý chung)
         var sids = scope.subjectIds;
         if (sids == null || sids.isEmpty()) {
             return (root, cq, cb) -> cb.disjunction();

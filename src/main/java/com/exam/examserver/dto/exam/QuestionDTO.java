@@ -2,6 +2,7 @@ package com.exam.examserver.dto.exam;
 
 import com.exam.examserver.dto.user.UserBasicDTO;
 import com.exam.examserver.enums.Difficulty;
+import com.exam.examserver.enums.ItemNature;
 import com.exam.examserver.enums.QuestionLabel;
 import com.exam.examserver.enums.QuestionType;
 
@@ -36,6 +37,25 @@ public class QuestionDTO {
 
     private Long bundleId;
     private String bundleInstructions;
+
+    private String typeCode;
+    private ItemNature itemNature;
+
+    public String getTypeCode() {
+        return typeCode;
+    }
+
+    public void setTypeCode(String typeCode) {
+        this.typeCode = typeCode;
+    }
+
+    public ItemNature getItemNature() {
+        return itemNature;
+    }
+
+    public void setItemNature(ItemNature itemNature) {
+        this.itemNature = itemNature;
+    }
 
     public Long getBundleId() {
         return bundleId;

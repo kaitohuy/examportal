@@ -6,6 +6,7 @@ import com.exam.examserver.dto.exam.*;
 import com.exam.examserver.dto.importing.CommitRequest;
 import com.exam.examserver.dto.importing.PreviewResponse;
 import com.exam.examserver.dto.importing.ImportResult;
+import com.exam.examserver.enums.ArchiveVariant;
 import com.exam.examserver.enums.Difficulty;
 import com.exam.examserver.enums.QuestionLabel;
 import com.exam.examserver.enums.QuestionType;
@@ -276,8 +277,9 @@ public class QuestionController {
     public ImportResult commit(@PathVariable Long subjectId,
                                @RequestBody CommitRequest req,
                                @AuthenticationPrincipal CustomUserDetails me,
-                               @RequestParam(defaultValue = "false") boolean saveCopy) {
-        return importService.commitPreview(subjectId, me.getId(), req, saveCopy);
+                               @RequestParam(defaultValue = "false") boolean saveCopy,
+                               @RequestParam(required = false) ArchiveVariant variant) {
+        return importService.commitPreview(subjectId, me.getId(), req, saveCopy, variant);
     }
 
     @GetMapping("/image/{sessionId}/{idx}")

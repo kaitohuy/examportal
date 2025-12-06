@@ -21,30 +21,10 @@ public interface QuestionRepository extends JpaRepository<Question, Long>, JpaSp
     @Query("SELECT q FROM Question q WHERE q.content = :content")
     Question findFirstByContent(@Param("content") String content);
 
-    // OLD (comment): lấy theo id không lọc thùng rác
-    // @EntityGraph(attributePaths = {"labels", "createdBy"})
-    // List<Question> findByIdIn(Collection<Long> ids);
-
     // NEW: luôn lọc isDeleted=false
     @EntityGraph(attributePaths = {"labels", "createdBy"})
     @Query("select q from Question q where q.id in :ids and q.isDeleted = false")
     List<Question> findByIdIn(@Param("ids") Collection<Long> ids);
-
-    // Clones (paging)
-    // OLD (comment): không lọc thùng rác
-    /*
-    @EntityGraph(attributePaths = {"labels", "createdBy"})
-    @Query(value = """
-       SELECT q FROM Question q
-       WHERE q.parent.id = :parentId
-       ORDER BY q.cloneIndex ASC
-       """,
-            countQuery = """
-       SELECT COUNT(q) FROM Question q
-       WHERE q.parent.id = :parentId
-       """)
-    Page<Question> findClonesByParentId(@Param("parentId") Long parentId, Pageable pageable);
-    */
 
     // NEW: chỉ lấy clones còn hoạt động
     @EntityGraph(attributePaths = {"labels", "createdBy"})
@@ -61,16 +41,6 @@ public interface QuestionRepository extends JpaRepository<Question, Long>, JpaSp
 
     @Query("select coalesce(max(q.cloneIndex), 0) from Question q where q.parent.id = :parentId")
     Integer findMaxCloneIndexByParentId(@Param("parentId") Long parentId);
-
-    // ===== COUNTS (giữ nguyên) =====
-    long countByCreatedAtBetween(LocalDateTime from, LocalDateTime to);
-    long countByCreatedAtGreaterThanEqual(LocalDateTime from);
-    long countByCreatedAtLessThan(LocalDateTime to);
-
-    long countByDifficulty(Difficulty difficulty);
-    long countByDifficultyAndCreatedAtBetween(Difficulty difficulty, LocalDateTime from, LocalDateTime to);
-    long countByDifficultyAndCreatedAtGreaterThanEqual(Difficulty difficulty, LocalDateTime from);
-    long countByDifficultyAndCreatedAtLessThan(Difficulty difficulty, LocalDateTime to);
 
     long countByIsDeletedFalse();
 
@@ -99,9 +69,6 @@ public interface QuestionRepository extends JpaRepository<Question, Long>, JpaSp
     long countByLabelTo(@Param("label") QuestionLabel label,
                         @Param("to")   LocalDateTime to);
 
-    // OLD (comment) duplicate signature from above; left for reference
-    // List<Question> findByIdIn(List<Long> ids);
-
     boolean existsBySubjectIdAndQuestionCode(Long subjectId, String questionCode);
     boolean existsBySubjectIdAndQuestionCodeIgnoreCase(Long subjectId, String questionCode);
 
@@ -112,29 +79,6 @@ public interface QuestionRepository extends JpaRepository<Question, Long>, JpaSp
     @Modifying
     @Query("update Question q set q.questionCode=:code where q.id=:id")
     int updateQuestionCode(@Param("id") Long id, @Param("code") String code);
-
-    // OLD (comment): chưa lọc q.isDeleted
-    /*
-    @Query("""
-    select q.id
-    from Question q
-      join QuestionMeta qm on qm.questionId = q.id
-    where q.subject.id = :subjectId
-      and qm.status = com.exam.examserver.enums.RecordStatus.APPROVED
-      and (:chapter is null or qm.chapter = :chapter)
-      and (
-        :labelsEmpty = true or
-        exists (
-          select 1 from Question qq join qq.labels lb
-          where qq.id = q.id and lb in :labels
-        )
-      )
-  """)
-    List<Long> findApprovedIdsByScopeAndLabels(@Param("subjectId") Long subjectId,
-                                               @Param("chapter") Integer chapter,
-                                               @Param("labels") Collection<QuestionLabel> labels,
-                                               @Param("labelsEmpty") boolean labelsEmpty);
-    */
 
     // NEW: chỉ trả id câu APPROVED mà chưa bị xoá
     @Query("""

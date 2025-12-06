@@ -292,7 +292,7 @@ public class ImportQuestionService {
     }
 
     // ImportQuestionService.java
-    public ImportResult commitPreview(Long subjectId, Long userId, CommitRequest req, boolean saveCopy) {
+    public ImportResult commitPreview(Long subjectId, Long userId, CommitRequest req, boolean saveCopy, ArchiveVariant variant) {
         var session = previewStore.get(req.sessionId);
         if (session == null) throw new IllegalArgumentException("Preview session expired or not found");
 
@@ -520,6 +520,7 @@ public class ImportQuestionService {
                     meta.put("totalCommitted", success);
                     meta.put("errorsCount", errors.size());
                     meta.put("source", "preview-upload");
+                    meta.put("variant", variant);
 
                     fileArchiveService.saveExistingByKey(
                             "IMPORT", subjectId, userId, originalName, temp.contentType(), finalKey, meta

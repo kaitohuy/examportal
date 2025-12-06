@@ -3,10 +3,7 @@ package com.exam.examserver.service.impl;
 import com.exam.examserver.dto.exam.CreateQuestionDTO;
 import com.exam.examserver.dto.exam.QuestionDTO;
 import com.exam.examserver.dto.exam.QuestionFilter;
-import com.exam.examserver.enums.Difficulty;
-import com.exam.examserver.enums.IssueStatus;
-import com.exam.examserver.enums.QuestionLabel;
-import com.exam.examserver.enums.QuestionType;
+import com.exam.examserver.enums.*;
 import com.exam.examserver.mapper.QuestionMapper;
 import com.exam.examserver.model.exam.*;
 import com.exam.examserver.model.user.User;
@@ -27,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -47,7 +45,7 @@ public class QuestionServiceImpl implements QuestionService {
     private final QuestionIssueRepository issueRepo;
     private final QuestionMetaRepository metaRepo;
     private final QuestionFingerprintRepository fpRepo;
-
+    private final BundleFingerprintRepository bundleFpRepo;
     @PersistenceContext
     private EntityManager em;
 
@@ -62,7 +60,7 @@ public class QuestionServiceImpl implements QuestionService {
                                QuestionBundleRepository bundleRepo,
                                QuestionIssueRepository issueRepo,
                                QuestionMetaRepository metaRepo,
-                               QuestionFingerprintRepository fpRepo) {
+                               QuestionFingerprintRepository fpRepo, BundleFingerprintRepository bundleFpRepo) {
         this.questionRepo = questionRepo;
         this.subjectRepo = subjectRepo;
         this.userRepo = userRepo;
@@ -75,6 +73,7 @@ public class QuestionServiceImpl implements QuestionService {
         this.issueRepo = issueRepo;
         this.metaRepo = metaRepo;
         this.fpRepo = fpRepo;
+        this.bundleFpRepo = bundleFpRepo;
     }
 
     /** Map Question -> DTO + gắn thêm bundleId / bundleInstructions nếu có */
@@ -178,6 +177,60 @@ public class QuestionServiceImpl implements QuestionService {
         return mapToDtoWithBundle(persisted);
     }
 
+//    @Override
+//    public QuestionDTO update(Long questionId, CreateQuestionDTO payload, List<MultipartFile> images) {
+//        Question q = questionRepo.findById(questionId)
+//                .orElseThrow(() -> new EntityNotFoundException("Question not found"));
+//
+//        // Không cho sửa parent/cloneIndex qua update
+//        validateQuestionPayload(payload);
+//
+//        q.setQuestionType(payload.getQuestionType());
+//        q.setContent(payload.getContent());
+//        q.setDifficulty(payload.getDifficulty());
+//        q.setChapter(payload.getChapter());
+//        q.setOptionA(payload.getOptionA());
+//        q.setOptionB(payload.getOptionB());
+//        q.setOptionC(payload.getOptionC());
+//        q.setOptionD(payload.getOptionD());
+//        q.setAnswer(payload.getAnswer());
+//        q.setAnswerText(payload.getAnswerText());
+//
+//        q.setLabels(normalizeLabels(payload.getLabels()));
+//
+//        if (images != null) {
+//            // xóa file vật lý ảnh cũ
+//            Set<String> oldUrls = new LinkedHashSet<>();
+//            if (q.getImages() != null) {
+//                for (QuestionImage im : q.getImages()) if (im.getUrl() != null) oldUrls.add(im.getUrl());
+//            }
+//            if (q.getImageUrl() != null) oldUrls.add(q.getImageUrl()); // cover cũ (sẽ set lại sau)
+//            for (String u : oldUrls) {
+//                try { imageStorageService.deleteImage(u); } catch (Exception ignored) {}
+//            }
+//
+//            // xóa record gallery cũ
+//            imageRepo.deleteByQuestionId(q.getId());
+//            q.getImages().clear();
+//            q.setImageUrl(null);
+//
+//            // lưu gallery mới
+//            if (!images.isEmpty()) {
+//                List<String> urls = storeImages(q.getId(), images);
+//                applyGallery(q, urls, /*replace*/ true);
+//            }
+//        }
+//
+//        String probe = (payload.getQuestionType() == QuestionType.MULTIPLE_CHOICE)
+//                ? TextSim.packMultipleChoice(payload.getContent(),
+//                payload.getOptionA(), payload.getOptionB(), payload.getOptionC(), payload.getOptionD())
+//                : payload.getContent();
+//
+//        Question updated = questionRepo.save(q);
+//        fingerprintService.upsert(updated);
+//        return mapToDtoWithBundle(updated);
+//    }
+
     @Override
     public QuestionDTO update(Long questionId, CreateQuestionDTO payload, List<MultipartFile> images) {
         Question q = questionRepo.findById(questionId)
@@ -186,6 +239,7 @@ public class QuestionServiceImpl implements QuestionService {
         // Không cho sửa parent/cloneIndex qua update
         validateQuestionPayload(payload);
 
+        // 1. Update thông tin bảng Question
         q.setQuestionType(payload.getQuestionType());
         q.setContent(payload.getContent());
         q.setDifficulty(payload.getDifficulty());
@@ -199,13 +253,36 @@ public class QuestionServiceImpl implements QuestionService {
 
         q.setLabels(normalizeLabels(payload.getLabels()));
 
+        // 2. [NEW] Update bảng QuestionMeta (TypeCode, ItemNature)
+        // Cố gắng tìm meta hiện tại, nếu không thấy (dữ liệu cũ) thì tạo mới
+        QuestionMeta meta = metaRepo.findById(questionId).orElse(null);
+
+        if (meta == null) {
+            meta = new QuestionMeta();
+            meta.setQuestion(q); // Map ID (OneToOne @MapsId)
+
+            // Set các giá trị mặc định bắt buộc cho Meta mới
+            meta.setPoints(new BigDecimal("1.00"));
+            meta.setUnitKind(UnitKind.FULL_QUESTION);
+            meta.setStatus(RecordStatus.DRAFT);
+        }
+
+        // Cập nhật giá trị từ Payload
+        meta.setTypeCode(payload.getTypeCode());
+        meta.setItemNature(payload.getItemNature());
+
+        // Lưu Meta
+        metaRepo.save(meta);
+        q.setMeta(meta); // Gán ngược lại vào entity Question để Mapper lấy dữ liệu ngay lập tức
+
+        // 3. Xử lý ảnh (Logic giữ nguyên)
         if (images != null) {
             // xóa file vật lý ảnh cũ
             Set<String> oldUrls = new LinkedHashSet<>();
             if (q.getImages() != null) {
                 for (QuestionImage im : q.getImages()) if (im.getUrl() != null) oldUrls.add(im.getUrl());
             }
-            if (q.getImageUrl() != null) oldUrls.add(q.getImageUrl()); // cover cũ (sẽ set lại sau)
+            if (q.getImageUrl() != null) oldUrls.add(q.getImageUrl()); // cover cũ
             for (String u : oldUrls) {
                 try { imageStorageService.deleteImage(u); } catch (Exception ignored) {}
             }
@@ -222,13 +299,10 @@ public class QuestionServiceImpl implements QuestionService {
             }
         }
 
-        String probe = (payload.getQuestionType() == QuestionType.MULTIPLE_CHOICE)
-                ? TextSim.packMultipleChoice(payload.getContent(),
-                payload.getOptionA(), payload.getOptionB(), payload.getOptionC(), payload.getOptionD())
-                : payload.getContent();
-
+        // 4. Lưu Question và Update Fingerprint
         Question updated = questionRepo.save(q);
         fingerprintService.upsert(updated);
+
         return mapToDtoWithBundle(updated);
     }
 
@@ -367,105 +441,191 @@ public class QuestionServiceImpl implements QuestionService {
         }
     }
 
+//    @Override
+//    @Transactional
+//    public void purge(Long questionId) {
+//        // LẤY trước các bundle bị ảnh hưởng (active) để lát nữa rebuild FP
+//        List<Long> affectedBundleIds = bundleItemRepo.findBundleIdsByQuestionId(questionId);
+//
+//        // Xóa file ảnh vật lý (nên làm best-effort)
+//        questionRepo.findById(questionId).ifPresent(q -> {
+//            Set<String> urls = new LinkedHashSet<>();
+//            if (q.getImageUrl() != null && !q.getImageUrl().isBlank()) urls.add(q.getImageUrl());
+//            if (q.getImages() != null) {
+//                for (QuestionImage img : q.getImages())
+//                    if (img.getUrl() != null && !img.getUrl().isBlank()) urls.add(img.getUrl());
+//            }
+//            for (String u : urls) try { imageStorageService.deleteImage(u); } catch (Exception ignored) {}
+//        });
+//
+//        // HARD DELETE theo đúng thứ tự
+//        hardDeleteQuestionsCascade(List.of(questionId));
+//
+//        // Rebuild FP cho các bundle còn lại
+//        if (affectedBundleIds != null && !affectedBundleIds.isEmpty()) {
+//            for (Long bid : affectedBundleIds) {
+//                String stem = bundleRepo.findInstructionsById(bid);
+//                // Lấy subjectId của bundle 1 lần, dùng cho mọi trường hợp
+//                Long subjectId = bundleRepo.findSubjectIdById(bid);
+//
+//                List<Long> qidsActive = bundleRepo.findActiveQuestionIdsInBundle(bid);
+//                if (qidsActive.isEmpty()) {
+//                    // bundle rỗng -> vẫn truyền subjectId của bundle
+//                    fingerprintService.rebuildBundleFP(bid, subjectId, stem, List.of());
+//                    continue;
+//                }
+//
+//                // bundle còn câu -> rebuild theo danh sách câu hiện hành
+//                List<Question> qs = questionRepo.findByIdIn(qidsActive);
+//                List<String> parts = qs.stream().map(Question::getContent).toList();
+//                fingerprintService.rebuildBundleFP(bid, subjectId, stem, parts);
+//            }
+//        }
+//    }
+//
+//    @Transactional
+//    public int purgeAll(Collection<Long> ids) {
+//        if (ids == null || ids.isEmpty()) return 0;
+//
+//        // 1. Thu thập bundle ảnh hưởng
+//        Set<Long> affectedBundles = new HashSet<>();
+//        for (Long id : ids) {
+//            List<Long> list = bundleItemRepo.findBundleIdsByQuestionId(id);
+//            if (list != null && !list.isEmpty()) affectedBundles.addAll(list);
+//        }
+//
+//        // 2. Hard delete questions & dependencies (bao gồm BundleItem)
+//        int purged = hardDeleteQuestionsCascade(ids);
+//
+//        // 3. Xử lý các bundle bị ảnh hưởng
+//        Set<Long> emptyBundles = new HashSet<>();
+//
+//        for (Long bid : affectedBundles) {
+//            // Đếm số item còn lại trong bundle
+//            Long itemCount = bundleItemRepo.countByBundleId(bid);
+//
+//            if (itemCount == 0) {
+//                // Bundle rỗng → đánh dấu để xóa
+//                emptyBundles.add(bid);
+//            } else {
+//                // Bundle còn câu → rebuild FP
+//                String stem = bundleRepo.findInstructionsById(bid);
+//                Long subjectId = bundleRepo.findSubjectIdById(bid);
+//                List<Long> qidsActive = bundleRepo.findActiveQuestionIdsInBundle(bid);
+//
+//                if (subjectId != null && !qidsActive.isEmpty()) {
+//                    List<Question> qs = questionRepo.findByIdIn(qidsActive);
+//                    List<String> parts = qs.stream().map(Question::getContent).toList();
+//                    fingerprintService.rebuildBundleFP(bid, subjectId, stem, parts);
+//                }
+//            }
+//        }
+//
+//        // 4. Xóa bundle rỗng + FP của chúng
+//        if (!emptyBundles.isEmpty()) {
+//            System.out.println("[purgeAll] Deleting " + emptyBundles.size() + " empty bundles: " + emptyBundles);
+//
+//            // Xóa FP trước (nếu không có CASCADE)
+//            try {
+//                em.createQuery("DELETE FROM BundleFingerprint bf WHERE bf.bundleId IN :ids")
+//                        .setParameter("ids", emptyBundles)
+//                        .executeUpdate();
+//            } catch (Exception e) {
+//                System.err.println("[WARN] Failed to delete bundle fingerprints: " + e.getMessage());
+//            }
+//
+//            // Xóa bundle
+//            bundleRepo.deleteAllById(emptyBundles);
+//        }
+//
+//        System.out.println("[purgeAll] purged=" + purged + ", deleted_bundles=" + emptyBundles.size());
+//        return purged;
+//    }
+
     @Override
     @Transactional
     public void purge(Long questionId) {
-        // LẤY trước các bundle bị ảnh hưởng (active) để lát nữa rebuild FP
-        List<Long> affectedBundleIds = bundleItemRepo.findBundleIdsByQuestionId(questionId);
-
-        // Xóa file ảnh vật lý (nên làm best-effort)
-        questionRepo.findById(questionId).ifPresent(q -> {
-            Set<String> urls = new LinkedHashSet<>();
-            if (q.getImageUrl() != null && !q.getImageUrl().isBlank()) urls.add(q.getImageUrl());
-            if (q.getImages() != null) {
-                for (QuestionImage img : q.getImages())
-                    if (img.getUrl() != null && !img.getUrl().isBlank()) urls.add(img.getUrl());
-            }
-            for (String u : urls) try { imageStorageService.deleteImage(u); } catch (Exception ignored) {}
-        });
-
-        // HARD DELETE theo đúng thứ tự
-        hardDeleteQuestionsCascade(List.of(questionId));
-
-        // Rebuild FP cho các bundle còn lại
-        if (affectedBundleIds != null && !affectedBundleIds.isEmpty()) {
-            for (Long bid : affectedBundleIds) {
-                String stem = bundleRepo.findInstructionsById(bid);
-                // Lấy subjectId của bundle 1 lần, dùng cho mọi trường hợp
-                Long subjectId = bundleRepo.findSubjectIdById(bid);
-
-                List<Long> qidsActive = bundleRepo.findActiveQuestionIdsInBundle(bid);
-                if (qidsActive.isEmpty()) {
-                    // bundle rỗng -> vẫn truyền subjectId của bundle
-                    fingerprintService.rebuildBundleFP(bid, subjectId, stem, List.of());
-                    continue;
-                }
-
-                // bundle còn câu -> rebuild theo danh sách câu hiện hành
-                List<Question> qs = questionRepo.findByIdIn(qidsActive);
-                List<String> parts = qs.stream().map(Question::getContent).toList();
-                fingerprintService.rebuildBundleFP(bid, subjectId, stem, parts);
-            }
-        }
+        // Gọi hàm purgeAll cho danh sách 1 phần tử để tái sử dụng logic chuẩn
+        purgeAll(List.of(questionId));
     }
 
+    @Override
     @Transactional
     public int purgeAll(Collection<Long> ids) {
         if (ids == null || ids.isEmpty()) return 0;
 
-        // 1. Thu thập bundle ảnh hưởng
+        // 1. Thu thập danh sách các Bundle bị ảnh hưởng (trước khi xoá câu hỏi)
         Set<Long> affectedBundles = new HashSet<>();
         for (Long id : ids) {
             List<Long> list = bundleItemRepo.findBundleIdsByQuestionId(id);
             if (list != null && !list.isEmpty()) affectedBundles.addAll(list);
         }
 
-        // 2. Hard delete questions & dependencies (bao gồm BundleItem)
+        // 2. Xóa dữ liệu (Question và các bảng con)
+        // Hàm này sẽ xóa bundle_item trước, sau đó đến question
         int purged = hardDeleteQuestionsCascade(ids);
 
-        // 3. Xử lý các bundle bị ảnh hưởng
-        Set<Long> emptyBundles = new HashSet<>();
+        // 3. Xử lý các Bundle sau khi xóa item
+        if (!affectedBundles.isEmpty()) {
+            Set<Long> emptyBundles = new HashSet<>();
 
-        for (Long bid : affectedBundles) {
-            // Đếm số item còn lại trong bundle
-            Long itemCount = bundleItemRepo.countByBundleId(bid);
+            for (Long bid : affectedBundles) {
+                // Đếm số item còn lại trong bundle
+                long itemCount = bundleItemRepo.countByBundleId(bid);
 
-            if (itemCount == 0) {
-                // Bundle rỗng → đánh dấu để xóa
-                emptyBundles.add(bid);
-            } else {
-                // Bundle còn câu → rebuild FP
-                String stem = bundleRepo.findInstructionsById(bid);
-                Long subjectId = bundleRepo.findSubjectIdById(bid);
-                List<Long> qidsActive = bundleRepo.findActiveQuestionIdsInBundle(bid);
+                if (itemCount == 0) {
+                    // Bundle rỗng -> Đánh dấu để xóa
+                    emptyBundles.add(bid);
+                } else {
+                    // Bundle còn câu -> Tính toán lại Fingerprint
+                    String stem = bundleRepo.findInstructionsById(bid);
+                    Long subjectId = bundleRepo.findSubjectIdById(bid);
 
-                if (subjectId != null && !qidsActive.isEmpty()) {
-                    List<Question> qs = questionRepo.findByIdIn(qidsActive);
-                    List<String> parts = qs.stream().map(Question::getContent).toList();
-                    fingerprintService.rebuildBundleFP(bid, subjectId, stem, parts);
+                    // Chỉ lấy các câu còn active
+                    List<Long> qidsActive = bundleRepo.findActiveQuestionIdsInBundle(bid);
+
+                    if (subjectId != null) {
+                        List<Question> qs = questionRepo.findByIdIn(qidsActive);
+                        List<String> parts = qs.stream().map(Question::getContent).toList();
+                        fingerprintService.rebuildBundleFP(bid, subjectId, stem, parts);
+                    }
                 }
             }
-        }
 
-        // 4. Xóa bundle rỗng + FP của chúng
-        if (!emptyBundles.isEmpty()) {
-            System.out.println("[purgeAll] Deleting " + emptyBundles.size() + " empty bundles: " + emptyBundles);
+            // 4. Xóa Bundle rỗng và Fingerprint tương ứng
+            if (!emptyBundles.isEmpty()) {
+                // Xóa Fingerprint trước (vì BundleFingerprint dùng bundleId làm PK)
+                bundleFpRepo.deleteAllById(emptyBundles);
 
-            // Xóa FP trước (nếu không có CASCADE)
-            try {
-                em.createQuery("DELETE FROM BundleFingerprint bf WHERE bf.bundleId IN :ids")
-                        .setParameter("ids", emptyBundles)
-                        .executeUpdate();
-            } catch (Exception e) {
-                System.err.println("[WARN] Failed to delete bundle fingerprints: " + e.getMessage());
+                // Sau đó xóa Bundle
+                bundleRepo.deleteAllById(emptyBundles);
             }
-
-            // Xóa bundle
-            bundleRepo.deleteAllById(emptyBundles);
         }
 
-        System.out.println("[purgeAll] purged=" + purged + ", deleted_bundles=" + emptyBundles.size());
         return purged;
+    }
+
+    @Transactional
+    protected int hardDeleteQuestionsCascade(Collection<Long> rootIds) {
+        if (rootIds == null || rootIds.isEmpty()) return 0;
+
+        // 1) Gom tất cả id (bao gồm cả clone con nếu có)
+        Set<Long> allIds = expandWithAllDescendants(rootIds);
+
+        // 2) Xóa các phụ thuộc (Thứ tự quan trọng)
+
+        // 2.1 Xóa liên kết trong BundleItem trước để gỡ khóa ngoại
+        bundleItemRepo.hardDeleteByQuestionIds(allIds);
+
+        // 2.2 Xóa các bảng phụ khác
+        try { questionRepo.deleteLabelsByQuestionIds(allIds); } catch (Exception ignore) {}
+        imageRepo.deleteByQuestionIdIn(allIds);
+        issueRepo.deleteByQuestionIdIn(allIds);
+        metaRepo.deleteAllByIdInBatch(allIds);
+        fpRepo.deleteAllByIdInBatch(allIds);
+
+        // 3) Cuối cùng: Xóa Question
+        return questionRepo.deleteByIdIn(allIds);
     }
 
     @Override
@@ -715,36 +875,36 @@ public class QuestionServiceImpl implements QuestionService {
         return all;
     }
 
-    @Transactional
-    protected int hardDeleteQuestionsCascade(Collection<Long> rootIds) {
-        if (rootIds == null || rootIds.isEmpty()) return 0;
-
-        // 1) Gom tất cả id (bao gồm clone con nhiều tầng) & xoá con trước cha
-        Set<Long> allIds = expandWithAllDescendants(rootIds);
-
-        // 2) DỌN PHỤ THUỘC (hard delete)
-        // 2.1 quiz_question (nếu có Repo, bạn có thể gọi ở đây) — bỏ qua nếu không dùng
-        // quizQuestionRepo.deleteByQuestionIdIn(allIds);
-
-        // 2.2 bundle_item → BẮT BUỘC xoá để gỡ FK question_id
-        bundleItemRepo.hardDeleteByQuestionIds(allIds);
-
-        // 2.3 question_labels (element collection)
-        try { questionRepo.deleteLabelsByQuestionIds(allIds); } catch (Exception ignore) {}
-
-        // 2.4 question_image (gallery)
-        imageRepo.deleteByQuestionIdIn(allIds);
-
-        // 2.5 question_issue (1-1)
-        issueRepo.deleteByQuestionIdIn(allIds);
-
-        // 2.6 question_meta + question_fingerprint (1-1; PK = question_id)
-        metaRepo.deleteAllByIdInBatch(allIds);
-        fpRepo.deleteAllByIdInBatch(allIds);
-
-        // 3) XÓA CHÍNH QUESTION
-        return questionRepo.deleteByIdIn(allIds);
-    }
+//    @Transactional
+//    protected int hardDeleteQuestionsCascade(Collection<Long> rootIds) {
+//        if (rootIds == null || rootIds.isEmpty()) return 0;
+//
+//        // 1) Gom tất cả id (bao gồm clone con nhiều tầng) & xoá con trước cha
+//        Set<Long> allIds = expandWithAllDescendants(rootIds);
+//
+//        // 2) DỌN PHỤ THUỘC (hard delete)
+//        // 2.1 quiz_question (nếu có Repo, bạn có thể gọi ở đây) — bỏ qua nếu không dùng
+//        // quizQuestionRepo.deleteByQuestionIdIn(allIds);
+//
+//        // 2.2 bundle_item → BẮT BUỘC xoá để gỡ FK question_id
+//        bundleItemRepo.hardDeleteByQuestionIds(allIds);
+//
+//        // 2.3 question_labels (element collection)
+//        try { questionRepo.deleteLabelsByQuestionIds(allIds); } catch (Exception ignore) {}
+//
+//        // 2.4 question_image (gallery)
+//        imageRepo.deleteByQuestionIdIn(allIds);
+//
+//        // 2.5 question_issue (1-1)
+//        issueRepo.deleteByQuestionIdIn(allIds);
+//
+//        // 2.6 question_meta + question_fingerprint (1-1; PK = question_id)
+//        metaRepo.deleteAllByIdInBatch(allIds);
+//        fpRepo.deleteAllByIdInBatch(allIds);
+//
+//        // 3) XÓA CHÍNH QUESTION
+//        return questionRepo.deleteByIdIn(allIds);
+//    }
 
     @Override
     public List<Long> findIdsByCodes(List<String> codes) {

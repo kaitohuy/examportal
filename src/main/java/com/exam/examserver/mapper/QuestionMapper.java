@@ -21,6 +21,8 @@ public interface QuestionMapper {
     // NEW – để service tự điền
     @Mapping(target = "bundleId", ignore = true)
     @Mapping(target = "bundleInstructions", ignore = true)
+    @Mapping(target = "typeCode", source = "meta.typeCode")
+    @Mapping(target = "itemNature", source = "meta.itemNature")
     QuestionDTO toDto(Question question);
 
     @Mapping(target = "id", ignore = true)

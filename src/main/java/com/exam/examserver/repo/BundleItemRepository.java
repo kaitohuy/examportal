@@ -1,6 +1,7 @@
 package com.exam.examserver.repo;
 
 import com.exam.examserver.model.exam.BundleItem;
+import jakarta.transaction.Transactional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Modifying;
@@ -62,10 +63,10 @@ public interface BundleItemRepository extends JpaRepository<BundleItem, Long>, J
     """)
     List<Long> findActiveQuestionIdsInBundle(@Param("bundleId") Long bundleId);
 
-    /**
-     * HARD DELETE tất cả item (kể cả isDeleted=false/true) tham chiếu tới các questionId.
-     */
+
+    // [NEW] Xóa cứng item khỏi bundle (bỏ qua soft-delete flag)
+    @Transactional
     @Modifying
-    @Query("delete from BundleItem bi where bi.question.id in :qids")
-    void hardDeleteByQuestionIds(@Param("qids") Collection<Long> qids);
+    @Query("delete from BundleItem bi where bi.question.id in :questionIds")
+    void hardDeleteByQuestionIds(@Param("questionIds") Collection<Long> questionIds);
 }
