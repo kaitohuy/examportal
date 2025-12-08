@@ -407,6 +407,7 @@ public class AutoPaperService {
         specs.add(QuestionMetaSpecs.bySubjectId(subjectId));
         if (sel.unitKind != null)          specs.add(QuestionMetaSpecs.unitKind(sel.unitKind));
         if (sel.cognitive != null)         specs.add(QuestionMetaSpecs.cognitive(sel.cognitive));
+        if (sel.nature != null)            specs.add(QuestionMetaSpecs.itemNature(sel.nature));
         if (sel.chapterIn != null && !sel.chapterIn.isEmpty())
             specs.add(QuestionMetaSpecs.chapterIn(sel.chapterIn));
         if (sel.typeCodeIn != null && !sel.typeCodeIn.isEmpty())

@@ -3,7 +3,9 @@ import org.springframework.data.jpa.domain.Specification;
 import jakarta.persistence.criteria.*;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 
 import com.exam.examserver.model.exam.QuestionMeta;
 import com.exam.examserver.model.exam.Question;
@@ -28,15 +30,35 @@ public final class QuestionMetaSpecs {
         return (root, cq, cb) -> (level == null) ? cb.conjunction() : cb.equal(root.get("cognitiveLevel"), level);
     }
 
+//    public static Specification<QuestionMeta> typeCodeIn(Collection<String> codes) {
+//        return (root, cq, cb) -> {
+//            if (codes == null || codes.isEmpty()) return cb.conjunction();
+//            CriteriaBuilder.In<String> in = cb.in(root.get("typeCode"));
+//            codes.forEach(in::value);
+//            return in;
+//        };
+//    }
+
     public static Specification<QuestionMeta> typeCodeIn(Collection<String> codes) {
         return (root, cq, cb) -> {
             if (codes == null || codes.isEmpty()) return cb.conjunction();
-            CriteriaBuilder.In<String> in = cb.in(root.get("typeCode"));
-            codes.forEach(in::value);
-            return in;
+
+            List<Predicate> predicates = new ArrayList<>();
+            for (String code : codes) {
+                // Điều kiện 1: Giống hệt (cho trường hợp mã không có con)
+                Predicate exact = cb.equal(root.get("typeCode"), code);
+
+                // Điều kiện 2: Là con (bắt đầu bằng "code.")
+                // Lưu ý: phải thêm dấu chấm để tránh nhầm lẫn (vd: tìm "1" lại ra "11", "12")
+                Predicate child = cb.like(root.get("typeCode"), code + ".%");
+
+                predicates.add(cb.or(exact, child));
+            }
+
+            // Kết hợp các mã bằng OR (nếu người dùng chọn nhiều mã cùng lúc)
+            return cb.or(predicates.toArray(new Predicate[0]));
         };
     }
-
     public static Specification<QuestionMeta> chapterIn(Collection<Integer> chapters) {
         return (root, cq, cb) -> {
             if (chapters == null || chapters.isEmpty()) return cb.conjunction();
@@ -109,4 +131,3 @@ public final class QuestionMetaSpecs {
         };
     }
 }
-

@@ -66,11 +66,13 @@ public class AutoGenController {
     @PostMapping("/export")
     public ResponseEntity<byte[]> exportZip(@PathVariable Long subjectId,
                                             @RequestBody(required = false) AutoGenRequest req,
-                                            //@RequestParam(defaultValue = "true") boolean commit,
                                             @RequestParam(defaultValue = "false") boolean commit,
 
+                                            // [NEW] Tham số chọn gộp file
+                                            @RequestParam(defaultValue = "false") boolean merge,
+
                                             @RequestParam(defaultValue = "De_tu_dong") String fileName,
-                                            // Header tuỳ chọn (có thể bỏ trống – dùng default)
+                                            // Header tuỳ chọn
                                             @RequestParam(required = false) String program,
                                             @RequestParam(required = false) String semester,
                                             @RequestParam(required = false) String academicYear,
@@ -80,57 +82,94 @@ public class AutoGenController {
                                             @RequestParam(required = false, name = "mau") String mauLabel,
                                             @AuthenticationPrincipal CustomUserDetails me
     ) throws Exception {
-        // 1) Chuẩn hoá request (nếu FE không gửi gì ⇒ variants=5, steps mặc định do service build)
+        // 1) Chuẩn hoá request
         AutoGenRequest effective = (req == null) ? new AutoGenRequest() : req;
         if (effective.variants <= 0) effective.variants = 5;
-
-//        AutoGenPreviewResponse resp = commit
-//                ? autoService.commit(subjectId, effective)
-//                : autoService.preview(subjectId, effective);
 
         // Luôn dùng preview: không ghi usage ở giai đoạn export
         AutoGenPreviewResponse resp = autoService.preview(subjectId, effective);
 
-        // 2) Header cho đề thi (dùng thông tin môn)
+        // 2) Header cơ sở (dùng chung)
         Subject subj = subjectService.getSubjectById(subjectId);
         String faculty = subj.getDepartment() != null ? subj.getDepartment().getName() : "";
+
+        // Tạo Base Header (PaperNo để null vì sẽ set động)
+        var baseHeader = new ExportQuestionService.ExamHeader(
+                "HỌC VIỆN CÔNG NGHỆ BƯU CHÍNH VIỄN THÔNG",
+                faculty,
+                (program == null ? "" : program),
+                subj.getName(),
+                subj.getCode(),
+                (semester == null ? "" : semester),
+                (academicYear == null ? "" : academicYear),
+                (classes == null ? "" : classes),
+                (duration == null ? "" : duration),
+                null,
+                (examForm == null ? "" : examForm),
+                (mauLabel == null ? "" : mauLabel)
+        );
 
         // 3) Tạo ZIP in-memory
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         try (ZipOutputStream zos = new ZipOutputStream(baos)) {
-            // 3a) Các đề: De_01.docx ... De_N.docx
-            for (int k = 0; k < resp.variants; k++) {
-                // gom ID theo từng "Câu"
-                List<List<Long>> rowsIds = new ArrayList<>();
-                for (AutoGenRowDTO row : resp.rows) {
-                    var cell = row.columns.get(k);
-                    rowsIds.add(cell.questionIds == null ? List.of() : cell.questionIds);
+
+            // [LOGIC MỚI] Kiểm tra biến merge
+            if (merge) {
+                // === CASE A: Gộp 1 file duy nhất (các đề cách nhau bởi Page Break) ===
+
+                // Chuẩn bị cấu trúc dữ liệu: List<List<List<Long>>> (List các Đề -> List các Câu -> List các Ý)
+                List<List<List<Long>>> allVariants = new ArrayList<>();
+
+                for (int k = 0; k < resp.variants; k++) {
+                    List<List<Long>> rowsIds = new ArrayList<>();
+                    for (AutoGenRowDTO row : resp.rows) {
+                        var cell = row.columns.get(k);
+                        rowsIds.add(cell.questionIds == null ? List.of() : cell.questionIds);
+                    }
+                    allVariants.add(rowsIds);
                 }
 
-                var header = new ExportQuestionService.ExamHeader(
-                        "HỌC VIỆN CÔNG NGHỆ BƯU CHÍNH VIỄN THÔNG",
-                        faculty,
-                        (program == null ? "" : program),
-                        subj.getName(),
-                        subj.getCode(),
-                        (semester == null ? "" : semester),
-                        (academicYear == null ? "" : academicYear),
-                        (classes == null ? "" : classes),
-                        (duration == null ? "" : duration),
-                        k + 1,                               // Đề số
-                        (examForm == null ? "" : examForm),
-                        (mauLabel == null ? "" : mauLabel)
-                );
+                // Gọi hàm mới bên Service (includeAnswers = false theo logic hiện tại của bạn)
+                byte[] mergedDoc = exportService.exportMergedExams(allVariants, baseHeader, false);
 
-                byte[] docx = exportService.exportExamFromBlueprint(rowsIds, header);
-
-                ZipEntry e = new ZipEntry(String.format("De_%02d.docx", (k + 1)));
+                // Ghi vào ZIP 1 file duy nhất
+                // Tên file ví dụ: De_tu_dong_All.docx
+                ZipEntry e = new ZipEntry(fileName + "_All.docx");
                 zos.putNextEntry(e);
-                zos.write(docx);
+                zos.write(mergedDoc);
                 zos.closeEntry();
+
+            } else {
+                // === CASE B: Tách rời từng file (Logic cũ) ===
+
+                for (int k = 0; k < resp.variants; k++) {
+                    // Gom ID cho đề thứ k
+                    List<List<Long>> rowsIds = new ArrayList<>();
+                    for (AutoGenRowDTO row : resp.rows) {
+                        var cell = row.columns.get(k);
+                        rowsIds.add(cell.questionIds == null ? List.of() : cell.questionIds);
+                    }
+
+                    // Tạo header riêng có số đề (k + 1)
+                    var variantHeader = new ExportQuestionService.ExamHeader(
+                            baseHeader.institute(), baseHeader.program(), baseHeader.faculty(),
+                            baseHeader.subjectName(), baseHeader.subjectCode(),
+                            baseHeader.semester(), baseHeader.academicYear(),
+                            baseHeader.classes(), baseHeader.duration(),
+                            k + 1, // Đề số
+                            baseHeader.examForm(), baseHeader.mauLabel()
+                    );
+
+                    byte[] docx = exportService.exportExamFromBlueprint(rowsIds, variantHeader);
+
+                    ZipEntry e = new ZipEntry(String.format("De_%02d.docx", (k + 1)));
+                    zos.putNextEntry(e);
+                    zos.write(docx);
+                    zos.closeEntry();
+                }
             }
 
-            // 3b) Ma trận: Ma_tran.docx
+            // 3b) Ma trận: Ma_tran.docx (Luôn luôn có)
             byte[] matrix = exportService.exportMatrixDocx(resp);
             ZipEntry e = new ZipEntry("Ma_tran.docx");
             zos.putNextEntry(e);
@@ -144,22 +183,18 @@ public class AutoGenController {
         Map<String, Object> meta = new HashMap<>();
         meta.put("variant", "EXAM");
         meta.put("format", "ZIP_DOCX");
+
+        // Lưu thêm thông tin merge vào meta để dễ trace
+        meta.put("merged", merge);
+
         meta.put("variants", resp.variants);
         meta.put("totalPerPaper", resp.paperTotals == null ? null :
                 Arrays.stream(resp.paperTotals).map(BigDecimal::toPlainString).toList());
         meta.put("rows", resp.rows == null ? 0 : resp.rows.size());
         meta.put("labelScope", (effective.labels == null || effective.labels.isEmpty())
                 ? "ALL" : effective.labels);
+
         String finalName = (fileName == null || fileName.isBlank() ? "Auto_De" : fileName) + ".zip";
-        // mới: lưu vào tmp, đặt trạng thái PENDING để duyệt
-//        fileArchiveService.savePendingExport(
-//                subjectId,
-//                me.getId(),
-//                finalName,                     // chú ý: chỉ basename, KHÔNG chứa "archives/"
-//                "application/zip",
-//                zipBytes,
-//                meta
-//        );
 
         // 5) Trả về file cho client
         HttpHeaders headers = new HttpHeaders();

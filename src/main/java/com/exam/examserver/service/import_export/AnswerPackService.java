@@ -39,23 +39,159 @@ public class AnswerPackService {
     }
 
     /** Xây gói đáp án từ 1 submission (đã APPROVED); releaseAt có thể null (đặt sau). */
+//    public FileArchive buildAndSaveAnswerFromSubmission(Long submissionArchiveId,
+//                                                        Long actorUserId,
+//                                                        Instant releaseAtOrNull) throws Exception {
+//        FileArchive sub = fileRepo.findById(submissionArchiveId).orElseThrow();
+//        if (!"SUBMISSION".equalsIgnoreCase(sub.getKind()))
+//            throw new IllegalArgumentException("Archive #" + submissionArchiveId + " không phải SUBMISSION");
+//        if (sub.getVariant() != ArchiveVariant.EXAM)
+//            throw new IllegalArgumentException("SUBMISSION không phải biến thể EXAM");
+//        if (sub.getReviewStatus() == null || sub.getReviewStatus().name().equals("PENDING"))
+//            throw new IllegalStateException("SUBMISSION chưa được duyệt");
+//
+//        // 1) Đọc ZIP submission từ GCS
+//        byte[] subZip = gcs.readBytes(sub.getStorageKey());
+//        if (subZip == null || subZip.length == 0)
+//            throw new IllegalStateException("Không đọc được nội dung submission ZIP");
+//
+//        // 1.a) Thử lấy blueprint.json như cũ; nếu không có -> tìm matrix.docx
+//        Blueprint bp = null;
+//        byte[] blueprintBytes = null;
+//        byte[] matrixBytes = null;
+//
+//        try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(subZip))) {
+//            for (ZipEntry e; (e = zis.getNextEntry()) != null; ) {
+//                if (e.isDirectory()) continue;
+//                String name = e.getName().toLowerCase(Locale.ROOT);
+//                if (name.endsWith("blueprint.json")) {
+//                    blueprintBytes = zis.readAllBytes();
+//                    break; // ưu tiên blueprint.json
+//                }
+//                // nếu tên chứa "matrix" hoặc "ma_tran"
+//                if (matrixBytes == null && (name.contains("matrix") || name.contains("ma_tran"))) {
+//                    matrixBytes = zis.readAllBytes();
+//                    // không break ở đây để vẫn ưu tiên blueprint nếu xuất hiện sau
+//                }
+//            }
+//        }
+//
+//        if (blueprintBytes != null) {
+//            bp = om.readValue(blueprintBytes, Blueprint.type());
+//        } else if (matrixBytes != null) {
+//            MatrixParseResult m = parseMatrixDocx(matrixBytes);
+//            bp = buildBlueprintFromCodes(m); // map mã -> ID
+//        } else {
+//            throw new IllegalStateException("Thiếu blueprint.json và không tìm thấy matrix.docx trong ZIP.");
+//        }
+//
+//        // 2) Sinh per-variant DOCX có đáp án
+//        ByteArrayOutputStream baosZip = new ByteArrayOutputStream();
+//        try (ZipOutputStream zos = new ZipOutputStream(baosZip)) {
+//            for (int k = 0; k < bp.variants; k++) {
+//                List<List<Long>> rowsIds = new ArrayList<>();
+////                for (Blueprint.Row row : bp.rows) {
+////                    List<Long> ids = (k < row.cells.size() ? row.cells.get(k) : List.of());
+////                    rowsIds.add(ids == null ? List.of() : ids);
+////                }
+//                for (Blueprint.Row row : bp.rows) {
+//                    List<Long> qids = new ArrayList<>();
+//
+//                    if (k < row.cells.size()) {
+//                        Object cell = row.cells().get(k);
+//
+//                        // case 1: cell là list ID (format cũ)
+//                        if (cell instanceof List<?>) {
+//                            ((List<?>) cell).forEach(n -> {
+//                                if (n instanceof Number num) qids.add(num.longValue());
+//                            });
+//                        }
+//                        // case 2: cell là object { ids, codes }
+//                        else if (cell instanceof Map<?, ?> map) {
+//                            Object idsObj = map.get("ids");
+//                            Object codesObj = map.get("codes");
+//
+//                            // ưu tiên ids
+//                            if (idsObj instanceof List<?>) {
+//                                ((List<?>) idsObj).forEach(n -> {
+//                                    if (n instanceof Number num) qids.add(num.longValue());
+//                                });
+//                            }
+//                            // fallback codes
+//                            else if (codesObj instanceof List<?>) {
+//                                List<String> codes = new ArrayList<>();
+//                                ((List<?>) codesObj).forEach(c -> {
+//                                    if (c instanceof String s && !s.isBlank()) codes.add(s);
+//                                });
+//                                if (!codes.isEmpty()) {
+//                                    Map<String, Long> m = questionService.findIdMapByCodes(codes);
+//                                    for (String code : codes) {
+//                                        Long id = m.get(code.trim().toLowerCase(Locale.ROOT));
+//                                        if (id != null) qids.add(id);
+//                                    }
+//                                }
+//                            }
+//                        }
+//                    }
+//
+//                    rowsIds.add(qids);
+//                }
+////                var header = new ExportQuestionService.ExamHeader(
+////                        "ĐÁP ÁN", "", "", "", "", "", "", "",
+////                        "", null, "", ""
+////                );
+////                byte[] docx = exportService.exportExamFromBlueprintWithAnswers(rowsIds, header);
+//
+//                // dùng paperNo = k+1 để in "ĐÁP ÁN ĐỀ SỐ X"
+//                var header = new ExportQuestionService.ExamHeader(
+//                        "", "", "", "", "", "", "", "",
+//                        "", k + 1, "", ""
+//                );
+//                byte[] docx = exportService.exportExamFromBlueprintWithAnswers(rowsIds, header);
+//
+//                // đặt ngay ở root ZIP
+//                zos.putNextEntry(new ZipEntry(String.format("De_%02d_DapAn.docx", (k + 1))));
+//                zos.write(docx);
+//                zos.closeEntry();
+//            }
+//        }
+//        byte[] answerZip = baosZip.toByteArray();
+//
+//        // 3) Lưu vào file_archive (APPROVED)
+//        Map<String, Object> meta = new LinkedHashMap<>();
+//        meta.put("variant", "ANSWER");
+//        meta.put("format", "ZIP_DOCX");
+//        meta.put("examArchiveId", submissionArchiveId);
+//        meta.put("variants", bp.variants);
+//        meta.put("releaseAt", releaseAtOrNull == null ? null : releaseAtOrNull.toString());
+//
+//        String fname = "Dap_an_Sub#" + submissionArchiveId + ".zip";
+//        return fileArchiveService.save("EXPORT",
+//                sub.getSubjectId(),
+//                actorUserId,          // người thực hiện build (HEAD)
+//                fname,
+//                "application/zip",
+//                answerZip,
+//                meta);
+//    }
+
+    /** Xây gói đáp án từ 1 submission (đã APPROVED); releaseAt có thể null (đặt sau). */
     public FileArchive buildAndSaveAnswerFromSubmission(Long submissionArchiveId,
                                                         Long actorUserId,
-                                                        Instant releaseAtOrNull) throws Exception {
+                                                        Instant releaseAtOrNull,
+                                                        boolean merge // [NEW] Tham số merge
+    ) throws Exception {
         FileArchive sub = fileRepo.findById(submissionArchiveId).orElseThrow();
-        if (!"SUBMISSION".equalsIgnoreCase(sub.getKind()))
-            throw new IllegalArgumentException("Archive #" + submissionArchiveId + " không phải SUBMISSION");
-        if (sub.getVariant() != ArchiveVariant.EXAM)
-            throw new IllegalArgumentException("SUBMISSION không phải biến thể EXAM");
-        if (sub.getReviewStatus() == null || sub.getReviewStatus().name().equals("PENDING"))
-            throw new IllegalStateException("SUBMISSION chưa được duyệt");
+        // (Các validate giữ nguyên)...
+        if (!"SUBMISSION".equalsIgnoreCase(sub.getKind())) throw new IllegalArgumentException("Not SUBMISSION");
+        if (sub.getVariant() != ArchiveVariant.EXAM) throw new IllegalArgumentException("Not EXAM variant");
+        if (sub.getReviewStatus() == null || sub.getReviewStatus().name().equals("PENDING")) throw new IllegalStateException("Not APPROVED");
 
-        // 1) Đọc ZIP submission từ GCS
+        // 1) Đọc ZIP submission
         byte[] subZip = gcs.readBytes(sub.getStorageKey());
-        if (subZip == null || subZip.length == 0)
-            throw new IllegalStateException("Không đọc được nội dung submission ZIP");
+        if (subZip == null || subZip.length == 0) throw new IllegalStateException("Empty ZIP");
 
-        // 1.a) Thử lấy blueprint.json như cũ; nếu không có -> tìm matrix.docx
+        // 1.a) Parse Blueprint/Matrix (Giữ nguyên logic cũ)
         Blueprint bp = null;
         byte[] blueprintBytes = null;
         byte[] matrixBytes = null;
@@ -66,12 +202,10 @@ public class AnswerPackService {
                 String name = e.getName().toLowerCase(Locale.ROOT);
                 if (name.endsWith("blueprint.json")) {
                     blueprintBytes = zis.readAllBytes();
-                    break; // ưu tiên blueprint.json
+                    break;
                 }
-                // nếu tên chứa "matrix" hoặc "ma_tran"
                 if (matrixBytes == null && (name.contains("matrix") || name.contains("ma_tran"))) {
                     matrixBytes = zis.readAllBytes();
-                    // không break ở đây để vẫn ưu tiên blueprint nếu xuất hiện sau
                 }
             }
         }
@@ -80,95 +214,112 @@ public class AnswerPackService {
             bp = om.readValue(blueprintBytes, Blueprint.type());
         } else if (matrixBytes != null) {
             MatrixParseResult m = parseMatrixDocx(matrixBytes);
-            bp = buildBlueprintFromCodes(m); // map mã -> ID
+            bp = buildBlueprintFromCodes(m);
         } else {
             throw new IllegalStateException("Thiếu blueprint.json và không tìm thấy matrix.docx trong ZIP.");
         }
 
-        // 2) Sinh per-variant DOCX có đáp án
-        ByteArrayOutputStream baosZip = new ByteArrayOutputStream();
-        try (ZipOutputStream zos = new ZipOutputStream(baosZip)) {
-            for (int k = 0; k < bp.variants; k++) {
-                List<List<Long>> rowsIds = new ArrayList<>();
-//                for (Blueprint.Row row : bp.rows) {
-//                    List<Long> ids = (k < row.cells.size() ? row.cells.get(k) : List.of());
-//                    rowsIds.add(ids == null ? List.of() : ids);
-//                }
-                for (Blueprint.Row row : bp.rows) {
-                    List<Long> qids = new ArrayList<>();
+        // 2) Chuẩn bị dữ liệu: List<List<List<Long>>> (Variants -> Rows -> IDs)
+        List<List<List<Long>>> allVariants = new ArrayList<>();
 
-                    if (k < row.cells.size()) {
-                        Object cell = row.cells().get(k);
-
-                        // case 1: cell là list ID (format cũ)
-                        if (cell instanceof List<?>) {
-                            ((List<?>) cell).forEach(n -> {
-                                if (n instanceof Number num) qids.add(num.longValue());
-                            });
-                        }
-                        // case 2: cell là object { ids, codes }
-                        else if (cell instanceof Map<?, ?> map) {
-                            Object idsObj = map.get("ids");
-                            Object codesObj = map.get("codes");
-
-                            // ưu tiên ids
-                            if (idsObj instanceof List<?>) {
-                                ((List<?>) idsObj).forEach(n -> {
-                                    if (n instanceof Number num) qids.add(num.longValue());
-                                });
-                            }
-                            // fallback codes
-                            else if (codesObj instanceof List<?>) {
-                                List<String> codes = new ArrayList<>();
-                                ((List<?>) codesObj).forEach(c -> {
-                                    if (c instanceof String s && !s.isBlank()) codes.add(s);
-                                });
-                                if (!codes.isEmpty()) {
-                                    Map<String, Long> m = questionService.findIdMapByCodes(codes);
-                                    for (String code : codes) {
-                                        Long id = m.get(code.trim().toLowerCase(Locale.ROOT));
-                                        if (id != null) qids.add(id);
-                                    }
+        for (int k = 0; k < bp.variants; k++) {
+            List<List<Long>> variantRows = new ArrayList<>();
+            for (Blueprint.Row row : bp.rows) {
+                List<Long> qids = new ArrayList<>();
+                if (k < row.cells().size()) {
+                    Object cell = row.cells().get(k);
+                    // Extract ID logic (Giữ nguyên logic cũ của bạn)
+                    if (cell instanceof List<?>) {
+                        ((List<?>) cell).forEach(n -> { if (n instanceof Number num) qids.add(num.longValue()); });
+                    } else if (cell instanceof Map<?, ?> map) {
+                        Object idsObj = map.get("ids");
+                        Object codesObj = map.get("codes");
+                        if (idsObj instanceof List<?>) {
+                            ((List<?>) idsObj).forEach(n -> { if (n instanceof Number num) qids.add(num.longValue()); });
+                        } else if (codesObj instanceof List<?>) {
+                            List<String> codes = new ArrayList<>();
+                            ((List<?>) codesObj).forEach(c -> { if (c instanceof String s && !s.isBlank()) codes.add(s); });
+                            if (!codes.isEmpty()) {
+                                Map<String, Long> m = questionService.findIdMapByCodes(codes);
+                                for (String code : codes) {
+                                    Long id = m.get(code.trim().toLowerCase(Locale.ROOT));
+                                    if (id != null) qids.add(id);
                                 }
                             }
                         }
                     }
-
-                    rowsIds.add(qids);
                 }
-//                var header = new ExportQuestionService.ExamHeader(
-//                        "ĐÁP ÁN", "", "", "", "", "", "", "",
-//                        "", null, "", ""
-//                );
-//                byte[] docx = exportService.exportExamFromBlueprintWithAnswers(rowsIds, header);
+                variantRows.add(qids);
+            }
+            allVariants.add(variantRows);
+        }
 
-                // dùng paperNo = k+1 để in "ĐÁP ÁN ĐỀ SỐ X"
-                var header = new ExportQuestionService.ExamHeader(
-                        "", "", "", "", "", "", "", "",
-                        "", k + 1, "", ""
-                );
-                byte[] docx = exportService.exportExamFromBlueprintWithAnswers(rowsIds, header);
+        // 3) Sinh file Word (Gộp hoặc Rời)
+        ByteArrayOutputStream baosZip = new ByteArrayOutputStream();
+        try (ZipOutputStream zos = new ZipOutputStream(baosZip)) {
 
-                // đặt ngay ở root ZIP
-                zos.putNextEntry(new ZipEntry(String.format("De_%02d_DapAn.docx", (k + 1))));
-                zos.write(docx);
+            // Header cơ sở (PaperNo để null)
+            var baseHeader = new ExportQuestionService.ExamHeader(
+                    "", "", "", "", "", "", "", "",
+                    "", null, "", ""
+            );
+
+            if (merge) {
+                // === [CASE A] GỘP 1 FILE ===
+                // includeAnswers = true
+                byte[] mergedDoc = exportService.exportMergedExams(allVariants, baseHeader, true);
+
+                zos.putNextEntry(new ZipEntry("Dap_an_All.docx"));
+                zos.write(mergedDoc);
                 zos.closeEntry();
+
+            } else {
+                // === [CASE B] TÁCH NHIỀU FILE ===
+                for (int k = 0; k < allVariants.size(); k++) {
+                    List<List<Long>> variantRows = allVariants.get(k);
+
+                    // Tạo header riêng có số đề k+1
+                    var variantHeader = new ExportQuestionService.ExamHeader(
+                            "", "", "", "", "", "", "", "",
+                            "", k + 1, "", ""
+                    );
+
+                    // [TRICK] Dùng exportMergedExams cho list 1 phần tử để tái sử dụng logic in đáp án
+                    // mà không cần sửa hàm exportExamFromBlueprint cũ
+                    List<List<List<Long>>> singleList = List.of(variantRows);
+                    byte[] docx = exportService.exportMergedExams(singleList, variantHeader, true);
+
+                    zos.putNextEntry(new ZipEntry(String.format("De_%02d_DapAn.docx", (k + 1))));
+                    zos.write(docx);
+                    zos.closeEntry();
+                }
             }
         }
         byte[] answerZip = baosZip.toByteArray();
 
-        // 3) Lưu vào file_archive (APPROVED)
+        // 4) Lưu vào file_archive
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("variant", "ANSWER");
         meta.put("format", "ZIP_DOCX");
         meta.put("examArchiveId", submissionArchiveId);
         meta.put("variants", bp.variants);
+        meta.put("merged", merge);
         meta.put("releaseAt", releaseAtOrNull == null ? null : releaseAtOrNull.toString());
 
-        String fname = "Dap_an_Sub#" + submissionArchiveId + ".zip";
+        // [NEW] Lấy tên file gốc từ Submission
+        String originalName = sub.getFilename(); // VD: "de_thi_cuoi_ky.zip"
+
+        // Loại bỏ đuôi mở rộng (nếu có) để ghép tên cho đẹp
+        if (originalName != null && originalName.contains(".")) {
+            originalName = originalName.substring(0, originalName.lastIndexOf('.'));
+        }
+
+        // Tạo tên file mới: Dap_an_File_<Tên gốc>.zip
+        String fname = "Dap_an_File_" + originalName + ".zip";
+
         return fileArchiveService.save("EXPORT",
                 sub.getSubjectId(),
-                actorUserId,          // người thực hiện build (HEAD)
+                actorUserId,
                 fname,
                 "application/zip",
                 answerZip,

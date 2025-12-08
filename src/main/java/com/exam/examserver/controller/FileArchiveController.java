@@ -460,6 +460,72 @@ public class FileArchiveController {
         return new UrlDTO(url);
     }
 
+//    @PostMapping("/{id}/approve")
+//    public ResponseEntity<Map<String,Object>> approve(
+//            @PathVariable Long id,
+//            @RequestParam(required=false) Long reviewerId,
+//            @RequestParam(defaultValue="false") boolean approveTask
+//    ) {
+//        var fa = fileRepo.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+//        ensureModeratable(fa);
+//        Long rid = (reviewerId != null) ? reviewerId : currentUserIdOrNull();
+//
+//        fileArchiveService.approve(id, rid); // move tmp/ -> archives/, mark APPROVED
+//
+//        boolean taskApproved = false;
+//        Long taskId = null;
+//
+//        if (!approveTask) {
+//            var tOpt = taskRepository.findFirstBySubmissionArchiveId(id);
+//            if (tOpt.isPresent()) {
+//                var st = tOpt.get().getStatus();
+//                if (st == ExamTaskStatus.SUBMITTED || st == ExamTaskStatus.RETURNED) {
+//                    approveTask = true;
+//                }
+//            }
+//        }
+//
+//        if (approveTask) {
+//            var optTask = taskRepository.findFirstBySubmissionArchiveId(id);
+//            if (optTask.isPresent()) {
+//                var t = optTask.get();
+//                if (t.getStatus() == ExamTaskStatus.SUBMITTED || t.getStatus() == ExamTaskStatus.RETURNED) {
+//                    examTaskService.headApproveDone(rid, t.getId());
+//                    taskApproved = true;
+//                    taskId = t.getId();
+//                }
+//            }
+//        }
+//
+//        // === NEW: nếu là SUBMISSION + EXAM -> build ANSWER ngay
+//        boolean answerBuilt = false;
+//        Long answerArchiveId = null;
+//        String answerError = null;
+//        try {
+//            var nowFa = fileRepo.findById(id).orElseThrow();
+//            if ("SUBMISSION".equalsIgnoreCase(nowFa.getKind())
+//                    && nowFa.getVariant() != null
+//                    && "EXAM".equalsIgnoreCase(nowFa.getVariant().name())) {
+//                var ansRaw = answerPackService.buildAndSaveAnswerFromSubmission(id, rid, null); // releaseAt=null
+//                var ans = finalizeAnswerArchive(ansRaw, rid);   // <-- SET reviewer + time
+//                answerBuilt = (ans != null);
+//                answerArchiveId = (ans == null ? null : ans.getId());
+//
+//            }
+//        } catch (Exception e) {
+//            answerError = e.getMessage();
+//        }
+//
+//        Map<String,Object> resp = new LinkedHashMap<>();
+//        resp.put("approved", true);
+//        resp.put("taskApproved", taskApproved);
+//        resp.put("taskId", taskId);
+//        resp.put("answerBuilt", answerBuilt);
+//        resp.put("answerArchiveId", answerArchiveId);
+//        if (answerError != null) resp.put("answerError", answerError);
+//        return ResponseEntity.ok(resp);
+//    }
+
     @PostMapping("/{id}/approve")
     public ResponseEntity<Map<String,Object>> approve(
             @PathVariable Long id,
@@ -497,10 +563,13 @@ public class FileArchiveController {
             }
         }
 
-        // === NEW: nếu là SUBMISSION + EXAM -> build ANSWER ngay
+        // === [DISABLED] Tự động sinh đáp án khi approve ===
+        // Logic cũ: nếu là SUBMISSION + EXAM -> build ANSWER ngay
         boolean answerBuilt = false;
         Long answerArchiveId = null;
         String answerError = null;
+
+        /*
         try {
             var nowFa = fileRepo.findById(id).orElseThrow();
             if ("SUBMISSION".equalsIgnoreCase(nowFa.getKind())
@@ -515,12 +584,13 @@ public class FileArchiveController {
         } catch (Exception e) {
             answerError = e.getMessage();
         }
+        */
 
         Map<String,Object> resp = new LinkedHashMap<>();
         resp.put("approved", true);
         resp.put("taskApproved", taskApproved);
         resp.put("taskId", taskId);
-        resp.put("answerBuilt", answerBuilt);
+        resp.put("answerBuilt", answerBuilt); // Sẽ luôn là false
         resp.put("answerArchiveId", answerArchiveId);
         if (answerError != null) resp.put("answerError", answerError);
         return ResponseEntity.ok(resp);
@@ -890,65 +960,157 @@ public class FileArchiveController {
         return ResponseEntity.status(HttpStatus.CREATED).body(dto);
     }
 
+//    @PostMapping("/{submissionArchiveId}/regenerate-answer")
+//    public ResponseEntity<Map<String, Object>> regenerateAnswer(
+//            @PathVariable Long submissionArchiveId,
+//            @RequestBody(required = false) Map<String, String> body
+//    ) {
+//        // 1) Kiểm tra submission tồn tại
+//        var submission = fileRepo.findById(submissionArchiveId)
+//                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+//                        "Không tìm thấy submission"));
+//
+//        // 2) Validate là SUBMISSION + EXAM + APPROVED
+//        if (!"SUBMISSION".equalsIgnoreCase(submission.getKind())) {
+//            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+//                    "File này không phải submission");
+//        }
+//
+//        if (submission.getVariant() != ArchiveVariant.EXAM) {
+//            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+//                    "Submission không phải loại EXAM");
+//        }
+//
+//        if (submission.getReviewStatus() != ReviewStatus.APPROVED) {
+//            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+//                    "Submission chưa được duyệt, không thể sinh đáp án");
+//        }
+//
+//        // 3) Kiểm tra quyền (phải là HEAD/ADMIN trong scope)
+//        ensureModeratable(submission);
+//
+//        // 4) Parse releaseAt từ body (optional)
+//        String releaseAtStr = (body != null) ? body.get("releaseAt") : null;
+//        Instant releaseAtTs = null;
+//        if (releaseAtStr != null && !releaseAtStr.isBlank()) {
+//            try {
+//                releaseAtTs = releaseAtStr.contains("T")
+//                        ? Instant.parse(releaseAtStr)
+//                        : LocalDate.parse(releaseAtStr).atStartOfDay(ZoneId.systemDefault()).toInstant();
+//            } catch (Exception e) {
+//                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+//                        "Định dạng releaseAt không hợp lệ");
+//            }
+//        }
+//
+//        // 5) Lấy userId hiện tại
+//        Long actorUserId = currentUserIdOrNull();
+//        if (actorUserId == null) {
+//            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+//                    "Không xác định được người dùng hiện tại");
+//        }
+//
+//        // 6) Sinh đáp án
+//        try {
+//            FileArchive answerArchive = finalizeAnswerArchive(
+//                    answerPackService.buildAndSaveAnswerFromSubmission(
+//                            submissionArchiveId,
+//                            actorUserId,
+//                            releaseAtTs
+//                    ),
+//                    actorUserId // HEAD/ADMIN đang thao tác
+//            );
+//
+//            Map<String, Object> response = new LinkedHashMap<>();
+//            response.put("success", true);
+//            response.put("message", "Sinh đáp án thành công");
+//            response.put("answerArchiveId", answerArchive.getId());
+//            response.put("filename", answerArchive.getFilename());
+//            response.put("releaseAt", releaseAtTs == null ? null : releaseAtTs.toString());
+//
+//            return ResponseEntity.ok(response);
+//
+//        } catch (IllegalArgumentException | IllegalStateException e) {
+//            // Lỗi validation từ AnswerPackService
+//            Map<String, Object> response = new LinkedHashMap<>();
+//            response.put("success", false);
+//            response.put("error", e.getMessage());
+//            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+//
+//        } catch (Exception e) {
+//            // Lỗi khác (IO, parsing, v.v.)
+//            Map<String, Object> response = new LinkedHashMap<>();
+//            response.put("success", false);
+//            response.put("error", "Lỗi khi sinh đáp án: " + e.getMessage());
+//            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+//        }
+//    }
+
     @PostMapping("/{submissionArchiveId}/regenerate-answer")
     public ResponseEntity<Map<String, Object>> regenerateAnswer(
             @PathVariable Long submissionArchiveId,
-            @RequestBody(required = false) Map<String, String> body
+            @RequestBody(required = false) Map<String, Object> body // [FIX] Đổi thành Object để đọc boolean
     ) {
         // 1) Kiểm tra submission tồn tại
         var submission = fileRepo.findById(submissionArchiveId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "Không tìm thấy submission"));
 
-        // 2) Validate là SUBMISSION + EXAM + APPROVED
+        // 2) Validate
         if (!"SUBMISSION".equalsIgnoreCase(submission.getKind())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "File này không phải submission");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "File này không phải submission");
         }
-
         if (submission.getVariant() != ArchiveVariant.EXAM) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Submission không phải loại EXAM");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Submission không phải loại EXAM");
         }
-
         if (submission.getReviewStatus() != ReviewStatus.APPROVED) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Submission chưa được duyệt, không thể sinh đáp án");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Submission chưa được duyệt");
         }
 
-        // 3) Kiểm tra quyền (phải là HEAD/ADMIN trong scope)
+        // 3) Kiểm tra quyền
         ensureModeratable(submission);
 
-        // 4) Parse releaseAt từ body (optional)
-        String releaseAtStr = (body != null) ? body.get("releaseAt") : null;
+        // 4) Parse params
         Instant releaseAtTs = null;
-        if (releaseAtStr != null && !releaseAtStr.isBlank()) {
-            try {
-                releaseAtTs = releaseAtStr.contains("T")
-                        ? Instant.parse(releaseAtStr)
-                        : LocalDate.parse(releaseAtStr).atStartOfDay(ZoneId.systemDefault()).toInstant();
-            } catch (Exception e) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "Định dạng releaseAt không hợp lệ");
+        boolean merge = false; // [NEW] Mặc định false
+
+        if (body != null) {
+            // Parse releaseAt
+            Object releaseAtObj = body.get("releaseAt");
+            if (releaseAtObj != null && !releaseAtObj.toString().isBlank()) {
+                String s = releaseAtObj.toString();
+                try {
+                    releaseAtTs = s.contains("T")
+                            ? Instant.parse(s)
+                            : LocalDate.parse(s).atStartOfDay(ZoneId.systemDefault()).toInstant();
+                } catch (Exception e) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Định dạng releaseAt không hợp lệ");
+                }
+            }
+
+            // [NEW] Parse merge param
+            if (body.get("merge") != null) {
+                merge = Boolean.parseBoolean(body.get("merge").toString());
             }
         }
 
-        // 5) Lấy userId hiện tại
+        // 5) Lấy userId
         Long actorUserId = currentUserIdOrNull();
         if (actorUserId == null) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
-                    "Không xác định được người dùng hiện tại");
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Không xác định được người dùng hiện tại");
         }
 
         // 6) Sinh đáp án
         try {
+            // [UPDATED] Gọi service với tham số merge
             FileArchive answerArchive = finalizeAnswerArchive(
                     answerPackService.buildAndSaveAnswerFromSubmission(
                             submissionArchiveId,
                             actorUserId,
-                            releaseAtTs
+                            releaseAtTs,
+                            merge // Truyền merge vào
                     ),
-                    actorUserId // HEAD/ADMIN đang thao tác
+                    actorUserId
             );
 
             Map<String, Object> response = new LinkedHashMap<>();
@@ -957,18 +1119,17 @@ public class FileArchiveController {
             response.put("answerArchiveId", answerArchive.getId());
             response.put("filename", answerArchive.getFilename());
             response.put("releaseAt", releaseAtTs == null ? null : releaseAtTs.toString());
+            response.put("merged", merge);
 
             return ResponseEntity.ok(response);
 
         } catch (IllegalArgumentException | IllegalStateException e) {
-            // Lỗi validation từ AnswerPackService
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("success", false);
             response.put("error", e.getMessage());
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
-
         } catch (Exception e) {
-            // Lỗi khác (IO, parsing, v.v.)
+            e.printStackTrace();
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("success", false);
             response.put("error", "Lỗi khi sinh đáp án: " + e.getMessage());

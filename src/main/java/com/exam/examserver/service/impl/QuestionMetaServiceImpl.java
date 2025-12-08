@@ -18,8 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.Collection;
-import java.util.List;
+import java.util.*;
 
 @Service
 @Transactional
@@ -101,6 +100,37 @@ public class QuestionMetaServiceImpl implements QuestionMetaService {
 
     @Override
     public List<String> findDistinctTypeCodesApproved(Long subjectId) {
-        return metaRepo.findDistinctTypeCodesBySubjectApproved(subjectId);
+        // 1. Lấy danh sách gốc từ DB (VD: [2.1.1, 2.1.2, 3.1])
+        List<String> rawCodes = metaRepo.findDistinctTypeCodesBySubjectApproved(subjectId);
+
+        // 2. Dùng TreeSet để sắp xếp và loại bỏ trùng lặp
+        Set<String> distinct = new TreeSet<>();
+
+        for (String code : rawCodes) {
+            if (code == null || code.isBlank()) continue;
+
+            // Thêm mã gốc
+            distinct.add(code);
+
+            // Tách theo dấu chấm để tạo các mã cha
+            // VD code="2.1.1" -> parts=["2", "1", "1"]
+            String[] parts = code.split("\\.");
+            if (parts.length > 1) {
+                // Thêm cấp 1 (VD: "2")
+                StringBuilder parent = new StringBuilder(parts[0]);
+                distinct.add(parent.toString());
+
+                // Thêm các cấp tiếp theo (trừ cấp cuối cùng vì đã add ở trên)
+                // VD: vòng lặp chạy i=1 -> thêm "2.1"
+                for (int i = 1; i < parts.length - 1; i++) {
+                    parent.append(".").append(parts[i]);
+                    distinct.add(parent.toString());
+                }
+            }
+        }
+
+        // Kết quả trả về: [2, 2.1, 2.1.1, 2.1.2, 3, 3.1]
+        System.out.println("arrays: " + distinct.toString());
+        return new ArrayList<>(distinct);
     }
 }
