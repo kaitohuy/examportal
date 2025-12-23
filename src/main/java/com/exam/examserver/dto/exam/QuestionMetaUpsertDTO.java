@@ -14,6 +14,15 @@ public class QuestionMetaUpsertDTO {
     private Integer chapter;                   // optional
     private Long topicId;                      // optional
     private RecordStatus status;               // required (default DRAFT)
+    private String problemType;
+
+    public String getProblemType() {
+        return problemType;
+    }
+
+    public void setProblemType(String problemType) {
+        this.problemType = problemType;
+    }
 
     public UnitKind getUnitKind() {
         return unitKind;

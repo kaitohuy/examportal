@@ -58,12 +58,23 @@ public class QuestionMeta {
     @Column(name = "item_nature", length = 20)
     private ItemNature itemNature;
 
+    @Column(name = "problem_type")
+    private String problemType;
+
     @PrePersist
     public void prePersist() {
         if (usageCount == null) usageCount = 0L;
         if (points == null) points = new BigDecimal("1.00");
         if (unitKind == null) unitKind = UnitKind.FULL_QUESTION;
         if (status == null) status = RecordStatus.DRAFT;
+    }
+
+    public String getProblemType() {
+        return problemType;
+    }
+
+    public void setProblemType(String problemType) {
+        this.problemType = problemType;
     }
 
     public ItemNature getItemNature() {

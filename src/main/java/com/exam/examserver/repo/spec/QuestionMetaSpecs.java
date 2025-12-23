@@ -39,6 +39,13 @@ public final class QuestionMetaSpecs {
 //        };
 //    }
 
+    public static Specification<QuestionMeta> problemTypeIn(Collection<String> types) {
+        return (root, cq, cb) -> {
+            if (types == null || types.isEmpty()) return cb.conjunction();
+            return root.get("problemType").in(types);
+        };
+    }
+
     public static Specification<QuestionMeta> typeCodeIn(Collection<String> codes) {
         return (root, cq, cb) -> {
             if (codes == null || codes.isEmpty()) return cb.conjunction();

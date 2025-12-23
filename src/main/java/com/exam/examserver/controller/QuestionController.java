@@ -113,41 +113,49 @@ public class QuestionController {
     // ===== Export =====
     @PostMapping("/export")
     public ResponseEntity<byte[]> exportSelected(@PathVariable Long subjectId,
-
                                                  @RequestBody BulkSelectionRequest sel,
                                                  @AuthenticationPrincipal(expression = "id") Long userId,
                                                  Authentication auth,
                                                  @RequestParam(defaultValue = "file") String fileName,
                                                  @RequestParam(defaultValue = "false") boolean includeAnswers,
                                                  @RequestParam(defaultValue = "pdf") String format,
-                                                 @RequestParam(defaultValue = "practice") String variant,
+                                                 @RequestParam(defaultValue = "practice") String variant, // exam hoặc practice
                                                  @RequestParam(defaultValue = "TU_LUAN") String form,
+
+                                                 // Các param Header cũ
                                                  @RequestParam(required = false) String semester,
                                                  @RequestParam(required = false) String academicYear,
                                                  @RequestParam(required = false) String classes,
                                                  @RequestParam(required = false) String duration,
                                                  @RequestParam(required = false) Integer paperNo,
                                                  @RequestParam(required = false) String examForm,
-                                                 @RequestParam(required = false) String program,
+                                                 @RequestParam(required = false) String faculty,
                                                  @RequestParam(required = false, name = "mau") String mauLabel,
-                                                 @RequestParam(defaultValue = "Đại học chính quy") String level,
-                                                 // NEW: PRACTICE có tùy chọn lưu
+
+                                                 // --- [UPDATE] Tách level và thêm trainingType ---
+                                                 @RequestParam(defaultValue = "Đại học") String level,
+                                                 @RequestParam(defaultValue = "Chính quy") String trainingType,
+
                                                  @RequestParam(defaultValue = "false") boolean saveCopy
     ) throws Exception {
         List<Long> questionIds = resolveSelectionToIds(subjectId, sel, false);
         if (questionIds.isEmpty()) {
             return ResponseEntity.badRequest().body(null);
         }
-        System.out.println("program: " + program);
+
+        // Log kiểm tra (tùy chọn)
+        System.out.println("Exporting Subject: " + subjectId + " | Faculty: " + faculty);
+
         Subject subj = subjectService.getSubjectById(subjectId);
 
-        // ---- Generate file (PDF/DOCX) giữ nguyên như cũ ----
         byte[] data;
         boolean isDocx = "docx".equalsIgnoreCase(format) || "word".equalsIgnoreCase(format);
         String fileNameWithExt;
 
+        // 1. Xử lý tạo file
         if (isDocx) {
             if ("practice".equalsIgnoreCase(variant)) {
+                // --- LOGIC PRACTICE GIỮ NGUYÊN ---
                 String bankTitle = "NGÂN HÀNG CÂU HỎI THI " +
                         ("TRAC_NGHIEM".equalsIgnoreCase(form) ? "TRẮC NGHIỆM" : "TỰ LUẬN");
 
@@ -156,13 +164,15 @@ public class QuestionController {
                         subj.getName(),
                         subj.getCode(),
                         subj.getDepartment() != null ? subj.getDepartment().getName() : "",
-                        level
+                        level // Practice vẫn dùng level cũ, ok
                 );
                 data = exportQuestionService.exportQuestionsToWordPractice(questionIds, includeAnswers, ph);
             } else {
+                // --- LOGIC EXAM: CẬP NHẬT HEADER MỚI ---
                 ExportQuestionService.ExamHeader eh = new ExportQuestionService.ExamHeader(
                         "HỌC VIỆN CÔNG NGHỆ BƯU CHÍNH VIỄN THÔNG",
-                        (program == null ? "" : program),
+                        (faculty == null ? "" : faculty),
+                        // Map Department name vào vị trí Program (Bộ môn)
                         (subj.getDepartment() != null ? subj.getDepartment().getName() : ""),
                         subj.getName(),
                         subj.getCode(),
@@ -172,17 +182,21 @@ public class QuestionController {
                         (duration == null ? "" : duration),
                         paperNo,
                         (examForm == null ? "" : examForm),
-                        (mauLabel == null ? "" : mauLabel)
+                        (mauLabel == null ? "" : mauLabel),
+                        // Thêm 2 trường mới vào cuối
+                        level,
+                        trainingType
                 );
                 data = exportQuestionService.exportQuestionsToWordExam(questionIds, includeAnswers, eh);
             }
             fileNameWithExt = fileName + ".docx";
         } else {
+            // PDF giữ nguyên
             data = exportQuestionService.exportQuestionsToPdf(questionIds, includeAnswers);
             fileNameWithExt = fileName + ".pdf";
         }
 
-        // Chuẩn hóa variant/format để đưa vào meta & quyết định luồng lưu
+        // 2. Chuẩn bị Metadata để lưu Archive
         final boolean isExamVariant = "exam".equalsIgnoreCase(variant);
         final String vUpper = isExamVariant ? "EXAM" : "PRACTICE";
         final String fmtUpper = isDocx ? "DOCX" : "PDF";
@@ -192,8 +206,8 @@ public class QuestionController {
                 : "application/pdf";
 
         Map<String, Object> meta = new HashMap<>();
-        meta.put("variant", vUpper);          // EXAM | PRACTICE
-        meta.put("format", fmtUpper);         // PDF | DOCX
+        meta.put("variant", vUpper);
+        meta.put("format", fmtUpper);
         meta.put("includeAnswers", includeAnswers);
         meta.put("form", form);
         meta.put("semester", semester);
@@ -202,22 +216,21 @@ public class QuestionController {
         meta.put("duration", duration);
         meta.put("paperNo", paperNo);
         meta.put("examForm", examForm);
-        meta.put("program", program);
+        meta.put("faculty", faculty);
         meta.put("mauLabel", mauLabel);
+        // Lưu thêm meta mới để sau này trace lại nếu cần
+        meta.put("level", level);
+        meta.put("trainingType", trainingType);
 
-        // === Chính sách lưu ===
+        // 3. Chính sách lưu (Giữ nguyên)
         if (isExamVariant) {
-            // EXAM → luôn lưu (FE bỏ nút saveCopy với EXAM)
             boolean privileged = isHeadOrAdmin(auth);
             if (privileged) {
-                // HEAD/ADMIN → lưu thẳng APPROVED
                 fileArchiveService.save("EXPORT", subjectId, userId, fileNameWithExt, mime, data, meta);
             } else {
-                // TEACHER → PENDING
                 fileArchiveService.savePendingExport(subjectId, userId, fileNameWithExt, mime, data, meta);
             }
         } else {
-            // PRACTICE: nếu saveCopy=true → lưu APPROVED; false → chỉ tải về
             if (saveCopy) {
                 fileArchiveService.save("EXPORT", subjectId, userId, fileNameWithExt, mime, data, meta);
             }

@@ -21,4 +21,6 @@ public class CommitBlock {
     public String answerText;
     public Set<QuestionLabel> labels;
     public List<Integer> imageIndexes = new ArrayList<>(); // ảnh được chọn để import
+
+    public String problemType;
 }

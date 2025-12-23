@@ -40,7 +40,8 @@ public class QuestionMetaController {
                 dto.getTopicId(),
                 dto.getStatus() == null ? RecordStatus.DRAFT : dto.getStatus(),
                 dto.getCognitiveLevel(),
-                dto.getTypeCode()
+                dto.getTypeCode(),
+                dto.getProblemType()
         );
         return mapper.toDto(saved);
     }
@@ -86,5 +87,12 @@ public class QuestionMetaController {
     @PostMapping("/meta/mark-used")
     public void markUsed(@RequestBody List<Long> questionIds) {
         metaService.markUsed(questionIds);
+    }
+
+    @GetMapping("/subject/{subjectId}/question-meta/problem-types")
+    public List<String> getProblemTypes(
+            @PathVariable Long subjectId
+    ) {
+        return metaService.getProblemTypesBySubject(subjectId);
     }
 }

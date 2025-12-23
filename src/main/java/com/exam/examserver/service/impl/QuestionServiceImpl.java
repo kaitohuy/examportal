@@ -82,19 +82,24 @@ public class QuestionServiceImpl implements QuestionService {
 
         QuestionDTO dto = mapper.toDto(q);
 
-        // Lấy bundle đầu tiên mà câu hỏi thuộc về (nếu có)
+        // ====== NEW: map QuestionMeta ======
+        metaRepo.findByQuestionId(q.getId()).ifPresent(meta -> {
+            dto.setTypeCode(meta.getTypeCode());
+            dto.setItemNature(meta.getItemNature());
+            dto.setProblemType(meta.getProblemType());
+        });
+
+        // ====== bundle (giữ nguyên) ======
         var rows = bundleRepo.findBundleMetaByQuestionId(q.getId());
         if (rows != null && !rows.isEmpty()) {
-            Object[] first = rows.get(0); // [0]=bundleId, [1]=instructions
+            Object[] first = rows.get(0);
             dto.setBundleId((Long) first[0]);
             dto.setBundleInstructions((String) first[1]);
-        } else {
-            dto.setBundleId(null);
-            dto.setBundleInstructions(null);
         }
 
         return dto;
     }
+
 
     @Override
     public List<QuestionDTO> findByIds(List<Long> questionIds) {
@@ -270,6 +275,7 @@ public class QuestionServiceImpl implements QuestionService {
         // Cập nhật giá trị từ Payload
         meta.setTypeCode(payload.getTypeCode());
         meta.setItemNature(payload.getItemNature());
+        meta.setProblemType(payload.getProblemType());
 
         // Lưu Meta
         metaRepo.save(meta);

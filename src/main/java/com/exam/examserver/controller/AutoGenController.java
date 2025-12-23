@@ -67,37 +67,46 @@ public class AutoGenController {
     public ResponseEntity<byte[]> exportZip(@PathVariable Long subjectId,
                                             @RequestBody(required = false) AutoGenRequest req,
                                             @RequestParam(defaultValue = "false") boolean commit,
-
-                                            // [NEW] Tham số chọn gộp file
                                             @RequestParam(defaultValue = "false") boolean merge,
-
                                             @RequestParam(defaultValue = "De_tu_dong") String fileName,
-                                            // Header tuỳ chọn
-                                            @RequestParam(required = false) String program,
+
+                                            // --- HEADER PARAMS ---
+                                            @RequestParam(required = false) String faculty, // (Tên Khoa - map từ FE faculty)
+                                            @RequestParam(required = false) String program, // (Tên Bộ môn - map từ FE program nếu có, hoặc lấy từ Department)
                                             @RequestParam(required = false) String semester,
                                             @RequestParam(required = false) String academicYear,
                                             @RequestParam(required = false) String classes,
                                             @RequestParam(defaultValue = "90 phút") String duration,
                                             @RequestParam(defaultValue = "Hình thức thi viết") String examForm,
                                             @RequestParam(required = false, name = "mau") String mauLabel,
+
+                                            // [NEW] 2 Params mới
+                                            @RequestParam(defaultValue = "Đại học") String level,
+                                            @RequestParam(defaultValue = "Chính quy") String trainingType,
+
                                             @AuthenticationPrincipal CustomUserDetails me
     ) throws Exception {
         // 1) Chuẩn hoá request
         AutoGenRequest effective = (req == null) ? new AutoGenRequest() : req;
         if (effective.variants <= 0) effective.variants = 5;
 
-        // Luôn dùng preview: không ghi usage ở giai đoạn export
+        // Luôn dùng preview
         AutoGenPreviewResponse resp = autoService.preview(subjectId, effective);
 
-        // 2) Header cơ sở (dùng chung)
+        // 2) Header cơ sở
         Subject subj = subjectService.getSubjectById(subjectId);
-        String faculty = subj.getDepartment() != null ? subj.getDepartment().getName() : "";
 
-        // Tạo Base Header (PaperNo để null vì sẽ set động)
+        // Logic ưu tiên: Nếu FE gửi lên thì dùng, không thì lấy từ DB Subject
+        String finalFaculty = (faculty != null && !faculty.isBlank()) ? faculty : "";
+        // Logic cũ của bạn: Program (Bộ môn) lấy từ Department name
+        String finalProgram = (program != null && !program.isBlank()) ? program
+                : (subj.getDepartment() != null ? subj.getDepartment().getName() : "");
+
+        // Tạo Base Header (PaperNo = null)
         var baseHeader = new ExportQuestionService.ExamHeader(
                 "HỌC VIỆN CÔNG NGHỆ BƯU CHÍNH VIỄN THÔNG",
-                faculty,
-                (program == null ? "" : program),
+                finalFaculty, // Khoa
+                finalProgram, // Bộ môn
                 subj.getName(),
                 subj.getCode(),
                 (semester == null ? "" : semester),
@@ -106,20 +115,19 @@ public class AutoGenController {
                 (duration == null ? "" : duration),
                 null,
                 (examForm == null ? "" : examForm),
-                (mauLabel == null ? "" : mauLabel)
+                (mauLabel == null ? "" : mauLabel),
+                // [NEW] Map 2 trường mới vào cuối
+                level,
+                trainingType
         );
 
         // 3) Tạo ZIP in-memory
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         try (ZipOutputStream zos = new ZipOutputStream(baos)) {
 
-            // [LOGIC MỚI] Kiểm tra biến merge
             if (merge) {
-                // === CASE A: Gộp 1 file duy nhất (các đề cách nhau bởi Page Break) ===
-
-                // Chuẩn bị cấu trúc dữ liệu: List<List<List<Long>>> (List các Đề -> List các Câu -> List các Ý)
+                // === CASE A: Gộp 1 file ===
                 List<List<List<Long>>> allVariants = new ArrayList<>();
-
                 for (int k = 0; k < resp.variants; k++) {
                     List<List<Long>> rowsIds = new ArrayList<>();
                     for (AutoGenRowDTO row : resp.rows) {
@@ -129,38 +137,40 @@ public class AutoGenController {
                     allVariants.add(rowsIds);
                 }
 
-                // Gọi hàm mới bên Service (includeAnswers = false theo logic hiện tại của bạn)
-                byte[] mergedDoc = exportService.exportMergedExams(allVariants, baseHeader, false);
+                // Gọi hàm exportMergedExams (đã update ở bước trước để xử lý level/trainingType)
+                System.out.println("resp: " + resp.rows.get(0).clos);
+                byte[] mergedDoc = exportService.exportMergedExams(allVariants, resp.rows, baseHeader, false);
 
-                // Ghi vào ZIP 1 file duy nhất
-                // Tên file ví dụ: De_tu_dong_All.docx
                 ZipEntry e = new ZipEntry(fileName + "_All.docx");
                 zos.putNextEntry(e);
                 zos.write(mergedDoc);
                 zos.closeEntry();
 
             } else {
-                // === CASE B: Tách rời từng file (Logic cũ) ===
-
+                // === CASE B: Tách rời từng file ===
                 for (int k = 0; k < resp.variants; k++) {
-                    // Gom ID cho đề thứ k
                     List<List<Long>> rowsIds = new ArrayList<>();
                     for (AutoGenRowDTO row : resp.rows) {
                         var cell = row.columns.get(k);
                         rowsIds.add(cell.questionIds == null ? List.of() : cell.questionIds);
                     }
 
-                    // Tạo header riêng có số đề (k + 1)
+                    // [UPDATE] Copy header đầy đủ 14 tham số
                     var variantHeader = new ExportQuestionService.ExamHeader(
-                            baseHeader.institute(), baseHeader.program(), baseHeader.faculty(),
+                            baseHeader.institute(), baseHeader.faculty(), baseHeader.program(),
                             baseHeader.subjectName(), baseHeader.subjectCode(),
                             baseHeader.semester(), baseHeader.academicYear(),
                             baseHeader.classes(), baseHeader.duration(),
                             k + 1, // Đề số
-                            baseHeader.examForm(), baseHeader.mauLabel()
+                            baseHeader.examForm(), baseHeader.mauLabel(),
+                            baseHeader.level(),         // Copy level
+                            baseHeader.trainingType()   // Copy trainingType
                     );
 
-                    byte[] docx = exportService.exportExamFromBlueprint(rowsIds, variantHeader);
+                    // Dùng hàm exportMergedExams cho list đơn để tận dụng logic header mới
+                    // (Thay vì dùng exportExamFromBlueprint cũ nếu hàm đó chưa update header mới)
+                    List<List<List<Long>>> singleList = List.of(rowsIds);
+                    byte[] docx = exportService.exportMergedExams(singleList, resp.rows, variantHeader, false);
 
                     ZipEntry e = new ZipEntry(String.format("De_%02d.docx", (k + 1)));
                     zos.putNextEntry(e);
@@ -169,7 +179,7 @@ public class AutoGenController {
                 }
             }
 
-            // 3b) Ma trận: Ma_tran.docx (Luôn luôn có)
+            // 3b) Ma trận (Giữ nguyên)
             byte[] matrix = exportService.exportMatrixDocx(resp);
             ZipEntry e = new ZipEntry("Ma_tran.docx");
             zos.putNextEntry(e);
@@ -193,10 +203,8 @@ public class AutoGenController {
         meta.put("rows", resp.rows == null ? 0 : resp.rows.size());
         meta.put("labelScope", (effective.labels == null || effective.labels.isEmpty())
                 ? "ALL" : effective.labels);
-
         String finalName = (fileName == null || fileName.isBlank() ? "Auto_De" : fileName) + ".zip";
 
-        // 5) Trả về file cho client
         HttpHeaders headers = new HttpHeaders();
         headers.setContentDispositionFormData("attachment", finalName);
         headers.setContentType(MediaType.parseMediaType("application/zip"));

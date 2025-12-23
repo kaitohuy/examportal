@@ -412,7 +412,8 @@ public class ImportQuestionService {
                                 questionMetaService.upsertDefault(
                                         subId, UnitKind.SUB_ITEM, DEFAULT_POINTS,
                                         sub.getChapter(), null, RecordStatus.APPROVED,
-                                        null, typeCode, nature
+                                        null, typeCode, nature,
+                                        firstNonNull(cb.problemType, orig.problemType)
                                 );
 
                                 createdIds.add(subId);
@@ -496,8 +497,11 @@ public class ImportQuestionService {
                 questionMetaService.upsertDefault(
                         qId, UnitKind.FULL_QUESTION, DEFAULT_POINTS,
                         dto.getChapter(), null, RecordStatus.DRAFT,
-                        null, typeCode
+                        null, typeCode,
+                        ItemNature.UNKNOWN,
+                        firstNonNull(cb.problemType, orig.problemType)
                 );
+
                 success++;
             } catch (Exception ex) {
                 String msg = "Block#" + cb.index + " ERROR: " + ex.getMessage();
@@ -1082,7 +1086,7 @@ public class ImportQuestionService {
     // ImportQuestionService.java
     private PreviewBlock parseOneBlockForPreview(String rawBlock, List<byte[]> allImages) {
         PreviewBlock b = new PreviewBlock();
-
+        b.problemType = null;
         // NEW: đọc mã khai báo + set previewCode
         String declared = extractDeclaredCode(rawBlock);
         if (declared != null && !declared.isBlank()) {

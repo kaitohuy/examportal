@@ -15,6 +15,24 @@ public class AutoGenSelectorDTO {
     public CognitiveLevel cognitive;          // optional
     public RecordStatus status;
     public ItemNature nature;
+    public List<String> problemTypeIn;
+    public List<String> cloIn;
+
+    public List<String> getCloIn() {
+        return cloIn;
+    }
+
+    public void setCloIn(List<String> cloIn) {
+        this.cloIn = cloIn;
+    }
+
+    public List<String> getProblemTypeIn() {
+        return problemTypeIn;
+    }
+
+    public void setProblemTypeIn(List<String> problemTypeIn) {
+        this.problemTypeIn = problemTypeIn;
+    }
 
     public ItemNature getNature() {
         return nature;

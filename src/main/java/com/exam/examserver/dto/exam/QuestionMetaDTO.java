@@ -20,6 +20,23 @@ public class QuestionMetaDTO {
     private Long usageCount;
     private RecordStatus status;
     private ItemNature itemNature;
+    private String problemType;
+
+    public String getProblemType() {
+        return problemType;
+    }
+
+    public void setProblemType(String problemType) {
+        this.problemType = problemType;
+    }
+
+    public ItemNature getItemNature() {
+        return itemNature;
+    }
+
+    public void setItemNature(ItemNature itemNature) {
+        this.itemNature = itemNature;
+    }
 
     public Long getQuestionId() {
         return questionId;

@@ -124,7 +124,7 @@ public class AutoPaperService {
 
                 List<Long> pickedForCell = new ArrayList<>();
                 BigDecimal sumPts = BigDecimal.ZERO;
-
+                Map<Long, List<String>> cellCloMap = new HashMap<>();
                 if (step.selectors == null || step.selectors.isEmpty()) {
                     out.errors.add("Step#" + (stepIdx+1) + " thiếu selectors");
                     row.columns.add(emptyCell());
@@ -181,20 +181,47 @@ public class AutoPaperService {
                     }
 
                     QuestionMeta chosen = candidates.get(ThreadLocalRandom.current().nextInt(candidates.size()));
-                    pickedForCell.add(chosen.getQuestionId());
+                    Long qid = chosen.getQuestionId();
+                    pickedForCell.add(qid);
+
+                    if (sel.cloIn != null && !sel.cloIn.isEmpty()) {
+                        cellCloMap
+                                .computeIfAbsent(qid, x -> new ArrayList<>())
+                                .addAll(sel.cloIn);
+                    }
+
                     sumPts = sumPts.add(chosen.getPoints() == null ? BigDecimal.ZERO : chosen.getPoints());
                 }
 
                 if (starvation) { row.columns.add(emptyCell()); continue; }
 
                 out.paperQuestionIds.get(k).addAll(pickedForCell);
-                row.columns.add(cellOf(pickedForCell, sumPts));
+                AutoGenCellDTO c = cellOf(pickedForCell, sumPts);
+                c.cloByQuestion = cellCloMap;
+                row.columns.add(c);
                 out.paperTotals[k] = out.paperTotals[k].add(sumPts);
 
                 if (NO_ACROSS) globalUsed.addAll(pickedForCell);
             }
+            // ===== GOM CLO TỪ SELECTORS =====
+            Set<String> cloSet = new LinkedHashSet<>();
+
+            if (step.selectors != null) {
+                for (AutoGenSelectorDTO sel : step.selectors) {
+                    if (sel.cloIn != null) {
+                        for (String clo : sel.cloIn) {
+                            if (clo != null && !clo.isBlank()) {
+                                cloSet.add(clo.trim());
+                            }
+                        }
+                    }
+                }
+            }
+
+            row.clos = cloSet.isEmpty() ? List.of() : new ArrayList<>(cloSet);
 
             out.rows.add(row);
+
         }
 
         return out;
@@ -410,6 +437,8 @@ public class AutoPaperService {
         if (sel.nature != null)            specs.add(QuestionMetaSpecs.itemNature(sel.nature));
         if (sel.chapterIn != null && !sel.chapterIn.isEmpty())
             specs.add(QuestionMetaSpecs.chapterIn(sel.chapterIn));
+        if (sel.problemTypeIn != null && !sel.problemTypeIn.isEmpty())
+            specs.add(QuestionMetaSpecs.problemTypeIn(sel.problemTypeIn));
         if (sel.typeCodeIn != null && !sel.typeCodeIn.isEmpty())
             specs.add(QuestionMetaSpecs.typeCodeIn(sel.typeCodeIn));
         if (sel.pointsEq != null)          specs.add(QuestionMetaSpecs.pointsBetween(sel.pointsEq, sel.pointsEq));

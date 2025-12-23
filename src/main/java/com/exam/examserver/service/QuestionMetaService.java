@@ -12,7 +12,6 @@ import java.util.Collection;
 import java.util.List;
 
 public interface QuestionMetaService {
-    // overload mới
     QuestionMeta upsertDefault(Long questionId,
                                UnitKind unitKind,
                                BigDecimal points,
@@ -21,7 +20,8 @@ public interface QuestionMetaService {
                                RecordStatus status,
                                CognitiveLevel cognitiveLevel,
                                String typeCode,
-                               ItemNature itemNature);
+                               ItemNature itemNature,
+                               String problemType);
 
     // tạm giữ hàm cũ — gọi sang hàm mới với UNKNOWN
     default QuestionMeta upsertDefault(Long questionId,
@@ -31,11 +31,14 @@ public interface QuestionMetaService {
                                        Long topicId,
                                        RecordStatus status,
                                        CognitiveLevel cognitiveLevel,
-                                       String typeCode) {
-        return upsertDefault(questionId, unitKind, points, chapter, topicId, status, cognitiveLevel, typeCode, ItemNature.UNKNOWN);
+                                       String typeCode,
+                                       String problemType) {
+        return upsertDefault(questionId, unitKind, points, chapter, topicId, status, cognitiveLevel, typeCode, ItemNature.UNKNOWN, problemType);
     }
 
     void markUsed(Collection<Long> questionIds);
 
     List<String> findDistinctTypeCodesApproved(Long subjectId);
+
+    List<String> getProblemTypesBySubject(Long subjectId);
 }

@@ -39,16 +39,16 @@ public class QuestionMetaServiceImpl implements QuestionMetaService {
     @Override
     public QuestionMeta upsertDefault(Long questionId, UnitKind unitKind, BigDecimal points,
                                       Integer chapter, Long topicId, RecordStatus status,
-                                      CognitiveLevel cognitiveLevel, String typeCode) {
+                                      CognitiveLevel cognitiveLevel, String typeCode, String problemType) {
         // gọi sang hàm mới với UNKNOWN để không phá chỗ gọi cũ
-        return upsertDefault(questionId, unitKind, points, chapter, topicId, status, cognitiveLevel, typeCode, ItemNature.UNKNOWN);
+        return upsertDefault(questionId, unitKind, points, chapter, topicId, status, cognitiveLevel, typeCode, ItemNature.UNKNOWN, problemType);
     }
 
     @Override
     public QuestionMeta upsertDefault(Long questionId, UnitKind unitKind, BigDecimal points,
                                       Integer chapter, Long topicId, RecordStatus status,
                                       CognitiveLevel cognitiveLevel, String typeCode,
-                                      ItemNature itemNature) {
+                                      ItemNature itemNature, String problemType) {
 
         QuestionMeta m = metaRepo.findById(questionId).orElseGet(() -> {
             Question qref = questionRepo.getReferenceById(questionId);
@@ -63,7 +63,8 @@ public class QuestionMetaServiceImpl implements QuestionMetaService {
 
         if (unitKind != null)        m.setUnitKind(unitKind);
         if (points != null)          m.setPoints(points);
-        m.setChapter(chapter);
+        if (chapter != null)
+            m.setChapter(chapter);
 
         if (topicId != null) {
             Topic t = topicRepo.findById(topicId).orElse(null);
@@ -78,6 +79,9 @@ public class QuestionMetaServiceImpl implements QuestionMetaService {
 
         if (itemNature != null)
             m.setItemNature(itemNature);
+
+        if (problemType != null)
+            m.setProblemType(problemType);
 
         QuestionMeta saved = metaRepo.saveAndFlush(m);
         System.out.printf("[META] upsert OK: qId=%d, unit=%s, points=%s, nature=%s%n",
@@ -133,4 +137,11 @@ public class QuestionMetaServiceImpl implements QuestionMetaService {
         System.out.println("arrays: " + distinct.toString());
         return new ArrayList<>(distinct);
     }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<String> getProblemTypesBySubject(Long subjectId) {
+        return metaRepo.findDistinctProblemTypesBySubjectApproved(subjectId);
+    }
+
 }

@@ -25,4 +25,18 @@ public interface QuestionMetaRepository extends JpaRepository<QuestionMeta, Long
         order by qm.typeCode asc
     """)
     List<String> findDistinctTypeCodesBySubjectApproved(@Param("subjectId") Long subjectId);
+
+    @Query("""
+        select distinct qm.problemType
+        from QuestionMeta qm
+        join Question q on q.id = qm.questionId
+        where q.subject.id = :subjectId
+          and qm.status = com.exam.examserver.enums.RecordStatus.APPROVED
+          and qm.problemType is not null
+          and trim(qm.problemType) <> ''
+        order by qm.problemType asc
+    """)
+    List<String> findDistinctProblemTypesBySubjectApproved(
+            @Param("subjectId") Long subjectId
+    );
 }

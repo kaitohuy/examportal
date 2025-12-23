@@ -24,6 +24,15 @@ public class CreateQuestionDTO {
     private Long parentId;
     private String typeCode;
     private ItemNature itemNature;
+    private String problemType;
+
+    public String getProblemType() {
+        return problemType;
+    }
+
+    public void setProblemType(String problemType) {
+        this.problemType = problemType;
+    }
 
     public String getTypeCode() {
         return typeCode;

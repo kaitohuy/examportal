@@ -1,5 +1,6 @@
 package com.exam.examserver.service.import_export;
 
+import com.exam.examserver.dto.autogen.AutoGenCellDTO;
 import com.exam.examserver.dto.autogen.AutoGenPreviewResponse;
 import com.exam.examserver.dto.autogen.AutoGenRowDTO;
 import com.exam.examserver.dto.exam.QuestionDTO;
@@ -64,8 +65,8 @@ public class ExportQuestionService {
 
     public static record ExamHeader(
             String institute,   // ví dụ: "HỌC VIỆN CÔNG NGHỆ BƯU CHÍNH VIỄN THÔNG"
-            String program,     // KHOA: (vd "Công nghệ thông tin")
-            String faculty,     // BỘ MÔN / Chuyên ngành (vd "Khoa học máy tính")
+            String faculty,     // KHOA: (vd "Công nghệ thông tin")
+            String program,     // BỘ MÔN / Chuyên ngành (vd "Khoa học máy tính")
             String subjectName,
             String subjectCode,
             String semester,    // "I", "II", "Hè", ...
@@ -74,7 +75,9 @@ public class ExportQuestionService {
             String duration,    // "90 phút"
             Integer paperNo,    // null -> ẩn
             String examForm,    // "Hình thức thi viết"
-            String mauLabel     // "Mẫu 3a" (có thể null)
+            String mauLabel,     // "Mẫu 3a" (có thể null)
+            String level,        // Trình độ đào tạo: Đại học / Cao đẳng
+            String trainingType  // Hình thức đào tạo: Chính quy / Vừa làm vừa học
     ) {}
 
 
@@ -561,164 +564,186 @@ public class ExportQuestionService {
     // ===== helpers (nếu bạn đã có thì giữ nguyên) =====
     private static String up(String s){ return s==null? "": s.toUpperCase(java.util.Locale.ROOT); }
 
-    private static void setParaSpacing(XWPFParagraph p, Integer beforePt, Integer afterPt, double lineMult){
-        var pr = p.getCTP().isSetPPr()? p.getCTP().getPPr(): p.getCTP().addNewPPr();
-        var sp = pr.isSetSpacing()? pr.getSpacing(): pr.addNewSpacing();
+    private static void setParaSpacing(XWPFParagraph p, Integer beforePt, Integer afterPt, double lineMult) {
+        var pr = p.getCTP().isSetPPr() ? p.getCTP().getPPr() : p.getCTP().addNewPPr();
+        var sp = pr.isSetSpacing() ? pr.getSpacing() : pr.addNewSpacing();
         if (beforePt != null) sp.setBefore(BigInteger.valueOf(beforePt * 20L));
-        if (afterPt  != null) sp.setAfter (BigInteger.valueOf(afterPt  * 20L));
+        if (afterPt != null) sp.setAfter(BigInteger.valueOf(afterPt * 20L));
         sp.setLine(BigInteger.valueOf(Math.round(lineMult * 240)));
         sp.setLineRule(STLineSpacingRule.AUTO);
     }
 
-    private static void addRun(XWPFParagraph p, String text, boolean bold, int fontPt, boolean upper){
-        XWPFRun r = p.createRun();
-        r.setFontFamily("Times New Roman");
-        r.setFontSize(fontPt);
-        r.setBold(bold);
-        r.setText(upper ? up(text) : (text==null? "" : text));
-        applyCondensed05pt(r);
-    }
-
-    // ===== HEADER ĐỀ THI (chuẩn theo yêu cầu) =====
     private void writeExamHeader(XWPFDocument doc, ExamHeader h) {
-        // "Mẫu 3a" – phải, 11pt
-        if (hasText(h.mauLabel())) {
+        // 1. "Mẫu 3a" – Góc phải, bên ngoài bảng
+        if (h.mauLabel() != null && !h.mauLabel().isEmpty()) {
             XWPFParagraph p = doc.createParagraph();
             p.setAlignment(ParagraphAlignment.RIGHT);
             setParaSpacing(p, null, 8, 1.08);
             XWPFRun r = p.createRun();
-            r.setFontFamily("Times New Roman"); r.setFontSize(11); r.setItalic(true);
+            r.setFontFamily("Times New Roman");
+            r.setFontSize(11);
+            r.setItalic(true);
             r.setText(h.mauLabel());
+            applyCondensed05pt(r);
         }
 
-        // Bảng 2 cột 58/42, không viền
-        XWPFTable head = doc.createTable(1, 2);
-        head.setWidth("100%");
-        head.removeBorders();
-        XWPFTableRow r0 = head.getRow(0);
-        XWPFTableCell left  = r0.getCell(0); left.setWidth("52%"); left.removeParagraph(0);
-        XWPFTableCell right = r0.getCell(1); right.setWidth("48%"); right.removeParagraph(0);
-        left.setVerticalAlignment(XWPFTableCell.XWPFVertAlign.CENTER);
-        right.setVerticalAlignment(XWPFTableCell.XWPFVertAlign.CENTER);
+        // 2. Tạo bảng 3 hàng, 2 cột
+        XWPFTable table = doc.createTable(3, 2);
+        table.setWidth("100%");
+        table.removeBorders();
 
-        // ==== CỘT TRÁI: HỌC VIỆN / KHOA / BỘ MÔN (font 11, 1.08, condensed −0.5pt) ====
-        XWPFParagraph pInst = left.addParagraph();
-        pInst.setAlignment(ParagraphAlignment.CENTER);
-        setParaSpacing(pInst, null, 8, 1.08);
-        addRun(pInst, up(h.institute()), false, 11, false);
-
-        XWPFParagraph pbm = left.addParagraph();
-        pbm.setAlignment(ParagraphAlignment.CENTER);
-        setParaSpacing(pbm, 6, 6, 1.08);
-        addRun(pbm, "KHOA: ", false, 11, true);
-        addRun(pbm, h.program(), false, 11, true);
-
-        XWPFParagraph pk = left.addParagraph();
-        pk.setAlignment(ParagraphAlignment.CENTER);
-        setParaSpacing(pk, 6, 6, 1.08);
-        addRun(pk, "BỘ MÔN: ", true, 11, true);
-        addRun(pk, h.faculty(), false, 11, true);
-
-        // ==== CỘT PHẢI: 2 dòng trống, Title + (Hình thức thi viết) ====
-        for (int i = 0; i < 2; i++) {
-            XWPFParagraph blank = right.addParagraph();
-            blank.setAlignment(ParagraphAlignment.CENTER);
-            setParaSpacing(blank, 0, 0, 1.08);
-            blank.createRun().setText("");
+        // Set độ rộng cột
+        for (XWPFTableRow row : table.getRows()) {
+            row.getCell(0).setWidth("56%");
+            row.getCell(1).setWidth("44%");
         }
 
-        XWPFParagraph pt = right.addParagraph();
-        pt.setAlignment(ParagraphAlignment.CENTER);
-        setParaSpacing(pt, null, 8, 1.08);
-        XWPFRun rt = pt.createRun();
-        rt.setFontFamily("Times New Roman"); rt.setFontSize(14); rt.setBold(true);
-        rt.setText(up("ĐỀ THI KẾT THÚC HỌC PHẦN"));
+        // ==========================================
+        // DÒNG 1: THÔNG TIN TRƯỜNG (Trái) - TÊN KỲ THI (Phải)
+        // ==========================================
+        XWPFTableRow row0 = table.getRow(0);
+        XWPFTableCell cell1_Left = row0.getCell(0);
+        XWPFTableCell cell1_Right = row0.getCell(1);
 
-        XWPFParagraph pf = right.addParagraph();
-        pf.setAlignment(ParagraphAlignment.CENTER);
-        setParaSpacing(pf, 0, 8, 1.08); // remove space before
-        XWPFRun rf = pf.createRun();
-        rf.setFontFamily("Times New Roman"); rf.setFontSize(14); rf.setBold(true); // không italic, giữ nguyên chữ hoa đầu câu
-        rf.setText("(" + nullToEmpty(h.examForm()) + ")");
+        cell1_Left.removeParagraph(0);
+        cell1_Right.removeParagraph(0);
 
-        // ==== Học phần (bold cả câu) ====
-        // ==== Bảng thông tin: Row0 = Học phần (merge 2 cột), Row1 = Lớp | Thời gian thi ====
-        XWPFTable info = doc.createTable(2, 2);
-        info.setWidth("100%");
-        info.removeBorders();
+        cell1_Left.setVerticalAlignment(XWPFTableCell.XWPFVertAlign.CENTER);
+        cell1_Right.setVerticalAlignment(XWPFTableCell.XWPFVertAlign.CENTER);
 
-// --- Row 0: merge 2 cột cho "Học phần…" ---
-        XWPFTableRow rSubj = info.getRow(0);
-        XWPFTableCell subL = rSubj.getCell(0);
-        XWPFTableCell subR = rSubj.getCell(1);
+        // Cột trái - Thông tin trường
+        addCellLine(cell1_Left, h.institute().toUpperCase(), true, 11, ParagraphAlignment.CENTER, false);
+        fillInfoCellNew(cell1_Left, "KHOA: ", nullToEmpty(h.faculty()).toUpperCase(), true, false,11, ParagraphAlignment.CENTER, false);
+        fillInfoCellNew(cell1_Left, "BỘ MÔN: ", nullToEmpty(h.program()).toUpperCase(), true, false,11, ParagraphAlignment.CENTER, false);
 
-// merge ngang bằng HMerge
-        var prL = subL.getCTTc().getTcPr(); if (prL == null) prL = subL.getCTTc().addNewTcPr();
-        (prL.getHMerge() == null ? prL.addNewHMerge() : prL.getHMerge()).setVal(STMerge.RESTART);
-        var prR = subR.getCTTc().getTcPr(); if (prR == null) prR = subR.getCTTc().addNewTcPr();
-        (prR.getHMerge() == null ? prR.addNewHMerge() : prR.getHMerge()).setVal(STMerge.CONTINUE);
+        // Cột phải - Tên kỳ thi
+        addCellLine(cell1_Right, "ĐỀ THI KẾT THÚC HỌC PHẦN", true, 14, ParagraphAlignment.CENTER, false);
+        String hinhThuc = h.examForm() == null ? "" : "(" + h.examForm() + ")";
+        addCellLine(cell1_Right, hinhThuc, true, 14, ParagraphAlignment.CENTER, false);
 
-// nội dung "Học phần" (bold cả câu) + tăng after để hàng cao hơn, center Oy
-        subL.removeParagraph(0);
-        XWPFParagraph pSubject = subL.addParagraph();
-        pSubject.setAlignment(ParagraphAlignment.LEFT);
-        setParaSpacing(pSubject, 8, 8, 1.08);           // trước 8pt, sau 8pt
-        XWPFRun rSub = pSubject.createRun();
-        rSub.setFontFamily("Times New Roman"); rSub.setFontSize(12); rSub.setBold(true);
-        rSub.setText("Học phần: " + nullToEmpty(h.subjectName())
-                + " (Học kỳ " + nullToEmpty(h.semester())
-                + " năm học " + nullToEmpty(h.academicYear()) + ")");
+        int heightInTwips = 1701;
+        row0.setHeight(heightInTwips);
+        CTTrPr trPr = row0.getCtRow().isSetTrPr() ? row0.getCtRow().getTrPr() : row0.getCtRow().addNewTrPr();
+        CTHeight ht = trPr.sizeOfTrHeightArray() == 0 ? trPr.addNewTrHeight() : trPr.getTrHeightArray(0);
 
-        subL.setVerticalAlignment(XWPFTableCell.XWPFVertAlign.CENTER);
-        subR.setVerticalAlignment(XWPFTableCell.XWPFVertAlign.CENTER);
+        ht.setVal(BigInteger.valueOf(heightInTwips));
+        ht.setHRule(STHeightRule.AT_LEAST);
 
-// --- Row 1: "Lớp" (trái 58%) | "Thời gian thi" (phải 42%, center) ---
-        XWPFTableRow rInfo = info.getRow(1);
-        XWPFTableCell cL = rInfo.getCell(0);  cL.setWidth("52%");
-        XWPFTableCell cR = rInfo.getCell(1);  cR.setWidth("48%");
-        cL.setVerticalAlignment(XWPFTableCell.XWPFVertAlign.CENTER);
-        cR.setVerticalAlignment(XWPFTableCell.XWPFVertAlign.CENTER);
+        // ==========================================
+        // DÒNG 2: HỌC PHẦN (MERGE 2 CỘT) - Thêm tên học phần, kỳ học và năm học
+        // ==========================================
+        XWPFTableRow row2 = table.getRow(1);
+        mergeCellsHorizontal(row2, 0, 1);
 
-// Lớp — bold cả câu, thêm khoảng trước/sau cho cân đối
-        cL.removeParagraph(0);
-        XWPFParagraph pL = cL.addParagraph();
-        pL.setAlignment(ParagraphAlignment.LEFT);
-        setParaSpacing(pL, 6, 6, 1.08);
-        XWPFRun rL = pL.createRun();
-        rL.setFontFamily("Times New Roman"); rL.setFontSize(12); rL.setBold(true);
-        rL.setText("Lớp: " + nullToEmpty(h.classes()));
+        XWPFTableCell cell2 = row2.getCell(0);
+        cell2.removeParagraph(0);
+        cell2.setVerticalAlignment(XWPFTableCell.XWPFVertAlign.CENTER);
 
-// Thời gian thi — label bold, giá trị thường; căn giữa
-        cR.removeParagraph(0);
-        XWPFParagraph pR = cR.addParagraph();
-        pR.setAlignment(ParagraphAlignment.CENTER);
-        setParaSpacing(pR, 6, 6, 1.08);
-        XWPFRun rR1 = pR.createRun();
-        rR1.setFontFamily("Times New Roman"); rR1.setFontSize(12); rR1.setBold(true);
-        rR1.setText("Thời gian thi:   ");
-        XWPFRun rR2 = pR.createRun();
-        rR2.setFontFamily("Times New Roman"); rR2.setFontSize(12); rR2.setBold(false);
-        rR2.setText(nullToEmpty(h.duration()));
+        // Học phần với kỳ học và năm học trong ngoặc
+        String hocPhanText = "Học phần: " + nullToEmpty(h.subjectName()) +
+                " (Học kỳ " + nullToEmpty(h.semester()) +
+                " năm học " + nullToEmpty(h.academicYear()) + ")";
+        addCellLine(cell2, hocPhanText, true, 13, ParagraphAlignment.LEFT, true);
 
-// Đề số — label bold, giá trị thường
+        // ==========================================
+        // DÒNG 3: MÃ HỌC PHẦN (Trái) - THỜI GIAN THI (Phải)
+        // ==========================================
+        XWPFTableRow row3 = table.getRow(2);
+        row3.getCell(0).removeParagraph(0);
+        row3.getCell(1).removeParagraph(0);
+        row3.getCell(0).setVerticalAlignment(XWPFTableCell.XWPFVertAlign.CENTER);
+        row3.getCell(1).setVerticalAlignment(XWPFTableCell.XWPFVertAlign.CENTER);
+
+        fillInfoCellNew(row3.getCell(0), "Mã học phần: ", h.subjectCode(), true, true, 13, ParagraphAlignment.LEFT, true);
+        fillInfoCellNew(row3.getCell(1), "Thời gian thi: ", h.duration(), true, false, 13, ParagraphAlignment.LEFT, true);
+
+        // ==========================================
+        // ĐỀ SỐ (Ngoài bảng)
+        // ==========================================
         if (h.paperNo() != null) {
             XWPFParagraph pNo = doc.createParagraph();
             pNo.setAlignment(ParagraphAlignment.CENTER);
             setParaSpacing(pNo, 8, 8, 1.08);
             XWPFRun rNo1 = pNo.createRun();
-            rNo1.setFontFamily("Times New Roman"); rNo1.setFontSize(16); rNo1.setBold(true);
+            rNo1.setFontFamily("Times New Roman");
+            rNo1.setFontSize(16);
+            rNo1.setBold(true);
             rNo1.setText("Đề số: ");
+            applyCondensed05pt(rNo1);
             XWPFRun rNo2 = pNo.createRun();
-            rNo2.setFontFamily("Times New Roman"); rNo2.setFontSize(16); rNo2.setBold(false);
+            rNo2.setFontFamily("Times New Roman");
+            rNo2.setFontSize(16);
+            rNo2.setBold(false);
             rNo2.setText(String.valueOf(h.paperNo()));
+            applyCondensed05pt(rNo2);
         }
 
-        // spacer nhỏ sau header
+        // Spacer sau header
         XWPFParagraph sp = doc.createParagraph();
         setParaSpacing(sp, 4, 12, 1.08);
     }
 
-    private String nullToEmpty(String s){ return s==null? "" : s; }
+    // Helper method để thêm dòng text vào cell
+    private void addCellLine(XWPFTableCell cell, String text, boolean isBold, int fontSize, ParagraphAlignment align, boolean addTab) {
+        XWPFParagraph p = cell.addParagraph();
+        p.setAlignment(align);
+        if(addTab) p.setIndentationFirstLine(720);
+        setParaSpacing(p, 8, 8, 1.08);
+        XWPFRun r = p.createRun();
+        r.setFontFamily("Times New Roman");
+        r.setFontSize(fontSize);
+        r.setBold(isBold);
+        r.setText(text);
+        applyCondensed05pt(r);
+    }
+
+    // Helper method để fill thông tin với label và value
+    private void fillInfoCellNew(XWPFTableCell cell, String label, String value, boolean labelBold, boolean valueBold, int fontSize, ParagraphAlignment align, boolean addTab) {
+        XWPFParagraph p = cell.addParagraph();
+        p.setAlignment(align);
+        if(addTab) p.setIndentationFirstLine(720);
+        setParaSpacing(p, 6, 6, 1.08);
+
+        // Label - không đậm
+        XWPFRun rLabel = p.createRun();
+        rLabel.setFontFamily("Times New Roman");
+        rLabel.setFontSize(fontSize);
+        rLabel.setBold(labelBold);
+        rLabel.setText(label);
+        applyCondensed05pt(rLabel);
+
+        // Value - đậm
+        XWPFRun rValue = p.createRun();
+        rValue.setFontFamily("Times New Roman");
+        rValue.setFontSize(fontSize);
+        rValue.setBold(valueBold);
+        rValue.setText(nullToEmpty(value));
+        applyCondensed05pt(rValue);
+    }
+
+    // Helper để merge cells (giữ nguyên)
+    private void mergeCellsHorizontal(XWPFTableRow row, int fromCol, int toCol) {
+        for (int cellIndex = fromCol; cellIndex <= toCol; cellIndex++) {
+            XWPFTableCell cell = row.getCell(cellIndex);
+            if (cell == null) cell = row.createCell();
+
+            var tcPr = cell.getCTTc().getTcPr();
+            if (tcPr == null) tcPr = cell.getCTTc().addNewTcPr();
+
+            var hMerge = tcPr.getHMerge();
+            if (hMerge == null) hMerge = tcPr.addNewHMerge();
+
+            if (cellIndex == fromCol) {
+                hMerge.setVal(STMerge.RESTART);
+            } else {
+                hMerge.setVal(STMerge.CONTINUE);
+            }
+        }
+    }
+
+    private String nullToEmpty(String s) {
+        return s == null ? "" : s;
+    }
 
     private void writeExamFooter(XWPFDocument doc) {
         // Đường kẻ mảnh và “Ghi chú: …”
@@ -1010,14 +1035,6 @@ public class ExportQuestionService {
         return out;
     }
 
-//    private String safeText(String s) {
-//        if (s == null) return "";
-//        String t = TextNormalize.remapPUA(s);
-//        t = TextNormalize.normalizePreserveNewlines(t);
-//        t = TextNormalize.normalizeSuperSubRuns(t);
-//        return t;
-//    }
-
     private String safeText(String s) {
         if (s == null) return "";
         String t = TextNormalize.remapPUA(s);
@@ -1063,7 +1080,7 @@ public class ExportQuestionService {
     }
 
 //    public byte[] exportExamFromBlueprint(
-//            List<List<Long>> rowsIds, // mỗi phần tử = ID(s) của 1 "Câu"
+//            List<List<Long>> rowsIds, // 1 đề
 //            ExamHeader header) throws IOException {
 //
 //        List<Long> allIds = rowsIds.stream().flatMap(List::stream).toList();
@@ -1074,92 +1091,8 @@ public class ExportQuestionService {
 //        try (XWPFDocument doc = new XWPFDocument();
 //             ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
 //
-//            // Header đề thi
-//            writeExamHeader(doc, header);
-//
-//            for (int i = 0; i < rowsIds.size(); i++) {
-//                List<Long> subIds = rowsIds.get(i);
-//                if (subIds == null || subIds.isEmpty()) continue;
-//
-//                BigDecimal totalPts = sumPointsOfQuestions(subIds);
-//                String ptsText = (totalPts != null && totalPts.compareTo(BigDecimal.ZERO) > 0)
-//                        ? " (" + fmtPoints(totalPts) + " điểm)" : "";
-//
-//                // "Câu i (x điểm)"
-//                writeQuestionTitle(doc, "Câu " + (i + 1) + ptsText + ": ");
-//
-//                boolean multi = subIds.size() > 1;
-//
-//                // ===== chỉ quan tâm stem nếu có >= 2 ý =====
-//                List<String> stemsClean = multi
-//                        ? computeCleanStems(subIds, stemMap)
-//                        : Collections.nCopies(subIds.size(), null);
-//
-//                // tập các stem khác null
-//                LinkedHashSet<String> distinct = new LinkedHashSet<>();
-//                for (String s : stemsClean) {
-//                    if (s != null && !s.isBlank()) distinct.add(s);
-//                }
-//
-//                boolean hasCommonStem = multi && distinct.size() == 1;
-//                String commonStem = hasCommonStem ? distinct.iterator().next() : null;
-//
-//                // TH1: tất cả ý chung 1 stem -> in 1 lần sau "Câu 1"
-//                if (hasCommonStem) {
-//                    writeContentSmart(doc, commonStem);
-//                }
-//
-//                char mark = 'a';
-//
-//                for (int j = 0; j < subIds.size(); j++) {
-//                    Long qid = subIds.get(j);
-//                    QuestionDTO q = qById.get(qid);
-//                    if (q == null) continue;
-//
-//                    String content = prettyMathSpaces(safeText(q.getContent()));
-//
-//                    if (multi && !hasCommonStem) {
-//                        // TH2: mỗi ý có stem riêng (hoặc không có)
-//                        String stemForThis = stemsClean.get(j);
-//                        StringBuilder sb = new StringBuilder();
-//                        sb.append(mark).append(") ");
-//                        if (stemForThis != null && !stemForThis.isBlank()) {
-//                            sb.append(stemForThis).append("\n");
-//                        }
-//                        sb.append(content);
-//                        writeContentSmart(doc, sb.toString());
-//                    } else if (multi) {
-//                        // TH1: đã in stem chung rồi -> mỗi ý chỉ cần "a) nội dung"
-//                        String line = mark + ") " + content;
-//                        writeContentSmart(doc, line);
-//                    } else {
-//                        // chỉ 1 ý trong câu -> giữ nguyên như trước
-//                        writeContentSmart(doc, content);
-//                    }
-//                    if (multi) mark++;
-//
-//                    // Ảnh
-//                    if (q.getImages() != null && !q.getImages().isEmpty()) {
-//                        for (var img : q.getImages()) addWordImage(doc, img.getUrl());
-//                    } else if (q.getImageUrl() != null) {
-//                        addWordImage(doc, q.getImageUrl());
-//                    }
-//
-//                    // MCQ
-//                    if (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE) {
-//                        String pad = multi ? "   " : "";
-//                        writeOptionIfPresent(doc, pad + "a) ", q.getOptionA());
-//                        writeOptionIfPresent(doc, pad + "b) ", q.getOptionB());
-//                        writeOptionIfPresent(doc, pad + "c) ", q.getOptionC());
-//                        writeOptionIfPresent(doc, pad + "d) ", q.getOptionD());
-//                    }
-//                }
-//
-//                doc.createParagraph(); // khoảng cách giữa các câu
-//            }
-//
-//            // Footer
-//            writeExamFooter(doc);
+//            // Gọi helper
+//            writeSingleExamToDoc(doc, rowsIds, rows, header, qById, stemMap, false); // includeAnswers = false theo logic cũ của bạn ở hàm này
 //
 //            finalizeDocx(doc);
 //            doc.write(baos);
@@ -1167,34 +1100,18 @@ public class ExportQuestionService {
 //        }
 //    }
 
-    public byte[] exportExamFromBlueprint(
-            List<List<Long>> rowsIds, // 1 đề
-            ExamHeader header) throws IOException {
-
-        List<Long> allIds = rowsIds.stream().flatMap(List::stream).toList();
-        Map<Long, QuestionDTO> qById = questionService.findByIds(allIds)
-                .stream().collect(Collectors.toMap(QuestionDTO::getId, q -> q));
-        Map<Long, String> stemMap = bundleService.findInstructionsByQuestionIds(allIds);
-
-        try (XWPFDocument doc = new XWPFDocument();
-             ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
-
-            // Gọi helper
-            writeSingleExamToDoc(doc, rowsIds, header, qById, stemMap, false); // includeAnswers = false theo logic cũ của bạn ở hàm này
-
-            finalizeDocx(doc);
-            doc.write(baos);
-            return baos.toByteArray();
-        }
-    }
-
     // [HELPER] Hàm ghi nội dung 1 đề thi vào Document (Dùng chung cho cả Single và Merged)
-    private void writeSingleExamToDoc(XWPFDocument doc,
-                                      List<List<Long>> rowsIds,
-                                      ExamHeader header,
-                                      Map<Long, QuestionDTO> qById,
-                                      Map<Long, String> stemMap,
-                                      boolean includeAnswers) {
+    private void writeSingleExamToDoc(
+            XWPFDocument doc,
+            List<List<Long>> rowsIds,
+            List<AutoGenRowDTO> rows,
+            List<List<AutoGenCellDTO>> rowsCells,
+            int variantIndex,
+            ExamHeader header,
+            Map<Long, QuestionDTO> qById,
+            Map<Long, String> stemMap,
+            boolean includeAnswers
+    ) {
 
         // --- 1. XỬ LÝ HEADER ---
         if (includeAnswers) {
@@ -1223,7 +1140,25 @@ public class ExportQuestionService {
             String ptsText = (totalPts != null && totalPts.compareTo(BigDecimal.ZERO) > 0)
                     ? " (" + fmtPoints(totalPts) + " điểm)" : "";
 
-            writeQuestionTitle(doc, "Câu " + (i + 1) + ptsText + ": ");
+            AutoGenRowDTO row = (rows != null && rows.size() > i) ? rows.get(i) : null;
+
+            String cloText = "";
+
+            if (row != null && row.clos != null && !row.clos.isEmpty()) {
+                List<String> uniq = row.clos.stream()
+                        .filter(c -> c != null && !c.isBlank())
+                        .distinct()
+                        .toList();
+
+                if (!uniq.isEmpty()) {
+                    cloText = " [" + String.join(", ", uniq) + "]";
+                }
+            }
+
+            writeQuestionTitle(
+                    doc,
+                    "Câu " + (i + 1) + ptsText + cloText + ": "
+            );
 
             boolean multi = subIds.size() > 1;
 
@@ -1272,6 +1207,28 @@ public class ExportQuestionService {
                 Long qid = subIds.get(j);
                 QuestionDTO q = qById.get(qid);
                 if (q == null) continue;
+                AutoGenCellDTO cell = null;
+
+                if (rowsCells != null
+                        && rowsCells.size() > i
+                        && rowsCells.get(i) != null
+                        && rowsCells.get(i).size() > variantIndex) {
+
+                    cell = rowsCells.get(i).get(variantIndex);
+                }
+
+                List<String> subClos = null;
+
+                if (cell != null && cell.cloByQuestion != null && cell.cloByQuestion.containsKey(qid)) {
+                    // SUB_ITEM: lấy CLO riêng từng ý
+                    subClos = cell.cloByQuestion.get(qid);
+                } else if (row != null && row.clos != null && !row.clos.isEmpty()) {
+                    // FULL_QUESTION: lấy CLO chung của cả câu
+                    subClos = row.clos;
+                }
+                String subCloText = (subClos != null && !subClos.isEmpty())
+                        ? "[" + String.join(", ", subClos) + "] "
+                        : "";
 
                 String content = prettyMathSpaces(safeText(q.getContent()));
 
@@ -1280,7 +1237,7 @@ public class ExportQuestionService {
                     // In: a) [Stem] [Xuống dòng] [Content]
                     String stemForThis = stemsClean.get(j);
                     StringBuilder sb = new StringBuilder();
-                    sb.append(mark).append(") ");
+                    sb.append(mark).append(") ").append(subCloText);
 
                     if (stemForThis != null && !stemForThis.isBlank()) {
                         sb.append(stemForThis.trim());
@@ -1294,9 +1251,7 @@ public class ExportQuestionService {
                     writeContentSmart(doc, sb.toString());
 
                 } else if (multi) {
-                    // --- TH1 tiếp: CHUNG STEM ---
-                    // Chỉ in a) [Content] vì Stem đã in chung ở trên
-                    String line = mark + ") " + content;
+                    String line = mark + ") " + subCloText + content;
                     writeContentSmart(doc, line);
                 } else {
                     // Câu đơn (1 ý)
@@ -1336,19 +1291,14 @@ public class ExportQuestionService {
         }
     }
 
-    /**
-     * Xuất nhiều đề thi vào chung 1 file Word, ngăn cách bởi Page Break.
-     * @param allVariants Danh sách các đề (mỗi đề là List<List<Long>>)
-     * @param baseHeader Header cơ sở (sẽ thay đổi PaperNo cho từng đề)
-     * @param includeAnswers Có in kèm đáp án ngay dưới câu hỏi không
-     */
     public byte[] exportMergedExams(
             List<List<List<Long>>> allVariants,
+            List<AutoGenRowDTO> rows,
             ExamHeader baseHeader,
             boolean includeAnswers
     ) throws IOException {
 
-        // 1. Gom tất cả ID của tất cả các đề để query DB 1 lần (tối ưu hiệu năng)
+        // 1. Gom tất cả ID để query 1 lần (Giữ nguyên logic tối ưu cũ)
         Set<Long> distinctIds = new HashSet<>();
         for (List<List<Long>> variant : allVariants) {
             if (variant == null) continue;
@@ -1364,25 +1314,45 @@ public class ExportQuestionService {
 
         try (XWPFDocument doc = new XWPFDocument();
              ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
-
+            List<List<AutoGenCellDTO>> rowsCells = rows.stream()
+                    .map(r -> r.columns)
+                    .toList();
             // 2. Lặp qua từng biến thể đề
             for (int i = 0; i < allVariants.size(); i++) {
                 List<List<Long>> variantRows = allVariants.get(i);
 
-                // Tạo header mới với số đề tương ứng (i + 1)
+                // [UPDATE] Tạo header cho đề số i+1, copy đầy đủ các trường mới
                 ExamHeader variantHeader = new ExamHeader(
-                        baseHeader.institute(), baseHeader.program(), baseHeader.faculty(),
-                        baseHeader.subjectName(), baseHeader.subjectCode(),
-                        baseHeader.semester(), baseHeader.academicYear(),
-                        baseHeader.classes(), baseHeader.duration(),
-                        i + 1, // Paper No tự động tăng: 1, 2, 3...
-                        baseHeader.examForm(), baseHeader.mauLabel()
+                        baseHeader.institute(),
+                        baseHeader.faculty(),
+                        baseHeader.program(),       // Department Name
+                        baseHeader.subjectName(),
+                        baseHeader.subjectCode(),
+                        baseHeader.semester(),
+                        baseHeader.academicYear(),
+                        baseHeader.classes(),
+                        baseHeader.duration(),
+                        i + 1,                      // Tự tăng số đề
+                        baseHeader.examForm(),
+                        baseHeader.mauLabel(),
+                        baseHeader.level(),         // Copy level từ base
+                        baseHeader.trainingType()   // Copy trainingType từ base
                 );
 
-                // Ghi nội dung đề thứ i
-                writeSingleExamToDoc(doc, variantRows, variantHeader, qById, stemMap, includeAnswers);
+                // Ghi nội dung đề
+                writeSingleExamToDoc(
+                        doc,
+                        variantRows,
+                        rows,
+                        rowsCells,   // truyền cell thật
+                        i,                   // variant index
+                        variantHeader,
+                        qById,
+                        stemMap,
+                        includeAnswers
+                );
 
-                // Nếu chưa phải đề cuối cùng -> Thêm ngắt trang (Page Break)
+                // Page Break nếu chưa phải đề cuối
                 if (i < allVariants.size() - 1) {
                     XWPFParagraph pBreak = doc.createParagraph();
                     pBreak.setPageBreak(true);
@@ -1467,17 +1437,6 @@ public class ExportQuestionService {
         }
     }
 
-    // Đặt trong ExportQuestionService
-    private void writeContentSmartAligned(XWPFDocument doc, String text, ParagraphAlignment align) {
-        if (text == null || text.isBlank()) return;
-        int before = doc.getParagraphs().size();
-        writeContentSmart(doc, text);                 // vẫn dùng pipeline cũ => LaTeX ok
-        var paras = doc.getParagraphs();
-        for (int i = before; i < paras.size(); i++) { // đổi alignment cho các paragraph vừa thêm
-            paras.get(i).setAlignment(align);
-        }
-    }
-
     // ===== helpers cho điểm (đặt trong ExportQuestionService) =====
     private BigDecimal sumPointsOfQuestions(List<Long> qids) {
         if (qids == null || qids.isEmpty()) return BigDecimal.ZERO;
@@ -1552,173 +1511,6 @@ public class ExportQuestionService {
         // ép width cho các bảng bạn tạo theo %:
         for (var tbl : doc.getTables()) forceTableWidthDXA(tbl, 9072); // ~ 6.3"
         sanitizeAllRuns(doc);
-    }
-
-    public byte[] exportExamFromBlueprintWithAnswers(
-            List<List<Long>> rowsIds,
-            ExamHeader header
-    ) throws IOException {
-
-        List<Long> allIds = rowsIds.stream().flatMap(List::stream).toList();
-        Map<Long, QuestionDTO> qById = questionService.findByIds(allIds)
-                .stream().collect(Collectors.toMap(QuestionDTO::getId, q -> q));
-        Map<Long, String> stemMap = bundleService.findInstructionsByQuestionIds(allIds);
-
-        try (XWPFDocument doc = new XWPFDocument();
-             ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
-
-            // Header đề thi
-            //writeExamHeader(doc, header);
-            // ===== Header đơn giản cho file đáp án =====
-            if (header != null) {
-                XWPFParagraph p = doc.createParagraph();
-                p.setAlignment(ParagraphAlignment.CENTER);
-                // khoảng cách dưới header cho thoáng (after ~20pt)
-                setSpacing(p, 0, 400, 1.0);
-
-                XWPFRun r = newRun(p, true, 16);
-                Integer paperNo = header.paperNo();
-                if (paperNo != null) {
-                    r.setText("ĐÁP ÁN ĐỀ SỐ " + paperNo);
-                } else {
-                    r.setText("ĐÁP ÁN");
-                }
-            }
-
-//            for (int i = 0; i < rowsIds.size(); i++) {
-//                List<Long> subIds = rowsIds.get(i);
-//                if (subIds == null || subIds.isEmpty()) continue;
-//
-//                // Giữ tiêu đề câu như bản gốc
-//                BigDecimal totalPts = sumPointsOfQuestions(subIds);
-//                String ptsText = (totalPts != null && totalPts.compareTo(BigDecimal.ZERO) > 0)
-//                        ? " (" + fmtPoints(totalPts) + " điểm)" : "";
-//                writeQuestionTitle(doc, "Câu " + (i + 1) + ptsText);
-//
-//                char mark = 'a';
-//                for (int j = 0; j < subIds.size(); j++) {
-//                    Long qid = subIds.get(j);
-//                    QuestionDTO q = qById.get(qid);
-//                    if (q == null) continue;
-//
-//                    String content = prettyMathSpaces(safeText(q.getContent()));
-//                    String prefix = (subIds.size() > 1) ? (String.valueOf(mark) + ") ") : "";
-//                    writeContentSmart(doc, prefix + content);
-//                    if (subIds.size() > 1) mark++;
-//
-//                    if (q.getImages() != null && !q.getImages().isEmpty()) {
-//                        for (var imgDto : q.getImages()) addWordImage(doc, imgDto.getUrl());
-//                    } else if (q.getImageUrl() != null) {
-//                        addWordImage(doc, q.getImageUrl());
-//                    }
-//
-//                    if (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE) {
-//                        writeOptionIfPresent(doc, "   a) ", q.getOptionA());
-//                        writeOptionIfPresent(doc, "   b) ", q.getOptionB());
-//                        writeOptionIfPresent(doc, "   c) ", q.getOptionC());
-//                        writeOptionIfPresent(doc, "   d) ", q.getOptionD());
-//                    }
-//
-//                    // === CHÈN ĐÁP ÁN ===
-//                    String ans = (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE)
-//                            ? q.getAnswer()
-//                            : q.getAnswerText();
-//                    if (hasText(ans)) {
-//                        writeAnswerSmart(doc, ans);
-//                    }
-//                }
-//
-//                doc.createParagraph(); // spacer giữa các câu
-//            }
-
-            for (int i = 0; i < rowsIds.size(); i++) {
-                List<Long> subIds = rowsIds.get(i);
-                if (subIds == null || subIds.isEmpty()) continue;
-
-                BigDecimal totalPts = sumPointsOfQuestions(subIds);
-                String ptsText = (totalPts != null && totalPts.compareTo(BigDecimal.ZERO) > 0)
-                        ? " (" + fmtPoints(totalPts) + " điểm)" : "";
-                writeQuestionTitle(doc, "Câu " + (i + 1) + ptsText + ": ");
-
-                boolean multi = subIds.size() > 1;
-
-                List<String> stemsClean = multi
-                        ? computeCleanStems(subIds, stemMap)
-                        : Collections.nCopies(subIds.size(), null);
-
-                LinkedHashSet<String> distinct = new LinkedHashSet<>();
-                for (String s : stemsClean) {
-                    if (s != null && !s.isBlank()) distinct.add(s);
-                }
-                boolean hasCommonStem = multi && distinct.size() == 1;
-                String commonStem = hasCommonStem ? distinct.iterator().next() : null;
-
-                // TH1: in stem chung 1 lần sau "Câu i"
-                if (hasCommonStem) {
-                    writeContentSmart(doc, commonStem);
-                }
-
-                char mark = 'a';
-
-                for (int j = 0; j < subIds.size(); j++) {
-                    Long qid = subIds.get(j);
-                    QuestionDTO q = qById.get(qid);
-                    if (q == null) continue;
-
-                    String content = prettyMathSpaces(safeText(q.getContent()));
-
-                    if (multi && !hasCommonStem) {
-                        // TH2: stem riêng từng ý
-                        String stemForThis = stemsClean.get(j);
-                        StringBuilder sb = new StringBuilder();
-                        sb.append(mark).append(") ");
-                        if (stemForThis != null && !stemForThis.isBlank()) {
-                            sb.append(stemForThis).append("\n");
-                        }
-                        sb.append(content);
-                        writeContentSmart(doc, sb.toString());
-                    } else if (multi) {
-                        // TH1: chỉ in "a) nội dung"
-                        String line = mark + ") " + content;
-                        writeContentSmart(doc, line);
-                    } else {
-                        // 1 ý duy nhất
-                        writeContentSmart(doc, content);
-                    }
-                    if (multi) mark++;
-
-                    // Ảnh, MCQ giữ nguyên
-                    if (q.getImages() != null && !q.getImages().isEmpty()) {
-                        for (var imgDto : q.getImages()) addWordImage(doc, imgDto.getUrl());
-                    } else if (q.getImageUrl() != null) {
-                        addWordImage(doc, q.getImageUrl());
-                    }
-
-                    if (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE) {
-                        writeOptionIfPresent(doc, multi ? "   a) " : "a) ", q.getOptionA());
-                        writeOptionIfPresent(doc, multi ? "   b) " : "b) ", q.getOptionB());
-                        writeOptionIfPresent(doc, multi ? "   c) " : "c) ", q.getOptionC());
-                        writeOptionIfPresent(doc, multi ? "   d) " : "d) ", q.getOptionD());
-                    }
-
-                    // === Đáp án cho từng ý ===
-                    String ans = (q.getQuestionType() == QuestionType.MULTIPLE_CHOICE)
-                            ? q.getAnswer()
-                            : q.getAnswerText();
-                    if (hasText(ans)) {
-                        writeAnswerSmart(doc, ans);
-                    }
-                }
-
-                doc.createParagraph(); // spacer giữa các câu
-            }
-
-            // Footer (giữ nguyên)
-            //writeExamFooter(doc);
-            finalizeDocx(doc);
-            doc.write(baos);
-            return baos.toByteArray();
-        }
     }
 
     /** Chuẩn hóa stem cho từng câu trong 1 hàng (row blueprint) */

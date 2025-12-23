@@ -261,13 +261,14 @@ public class AnswerPackService {
             // Header cơ sở (PaperNo để null)
             var baseHeader = new ExportQuestionService.ExamHeader(
                     "", "", "", "", "", "", "", "",
-                    "", null, "", ""
+                    "", null, "", "",
+                    "", "" // <--- THÊM level và trainingType (để rỗng)
             );
 
             if (merge) {
                 // === [CASE A] GỘP 1 FILE ===
                 // includeAnswers = true
-                byte[] mergedDoc = exportService.exportMergedExams(allVariants, baseHeader, true);
+                byte[] mergedDoc = exportService.exportMergedExams(allVariants, null, baseHeader, true);
 
                 zos.putNextEntry(new ZipEntry("Dap_an_All.docx"));
                 zos.write(mergedDoc);
@@ -281,13 +282,14 @@ public class AnswerPackService {
                     // Tạo header riêng có số đề k+1
                     var variantHeader = new ExportQuestionService.ExamHeader(
                             "", "", "", "", "", "", "", "",
-                            "", k + 1, "", ""
+                            "", k + 1, "", "",
+                            "", "" // <--- THÊM level và trainingType (để rỗng)
                     );
 
                     // [TRICK] Dùng exportMergedExams cho list 1 phần tử để tái sử dụng logic in đáp án
                     // mà không cần sửa hàm exportExamFromBlueprint cũ
                     List<List<List<Long>>> singleList = List.of(variantRows);
-                    byte[] docx = exportService.exportMergedExams(singleList, variantHeader, true);
+                    byte[] docx = exportService.exportMergedExams(singleList, null, variantHeader, true);
 
                     zos.putNextEntry(new ZipEntry(String.format("De_%02d_DapAn.docx", (k + 1))));
                     zos.write(docx);

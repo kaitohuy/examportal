@@ -38,4 +38,6 @@ public class PreviewBlock {
     public Integer cloneDesiredIndex;          // nếu user ghi C3. ... thì = 3, ngược lại null
     public Integer cloneNextIndex;             // dự kiến index sẽ dùng (đã tính toán)
     public String clonePreviewCode;
+
+    public String problemType;
 }
