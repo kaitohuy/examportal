@@ -9,10 +9,13 @@ import com.exam.examserver.model.exam.QuestionMeta;
 import com.exam.examserver.repo.QuestionMetaRepository;
 import com.exam.examserver.service.BundleService;
 import com.exam.examserver.service.QuestionService;
+import com.exam.examserver.util.MathOmmlRenderer;
 import com.exam.examserver.util.TextNormalize;
 import org.apache.poi.util.Units;
 import org.apache.poi.xwpf.usermodel.*;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.*;
+import org.scilab.forge.jlatexmath.TeXConstants;
+import org.scilab.forge.jlatexmath.TeXIcon;
 import org.springframework.stereotype.Service;
 import com.itextpdf.io.font.FontProgram;
 import com.itextpdf.io.font.FontProgramFactory;
@@ -32,13 +35,18 @@ import com.itextpdf.layout.properties.Property;
 import org.scilab.forge.jlatexmath.TeXFormula;
 import org.apache.poi.xwpf.usermodel.ParagraphAlignment;
 
+import javax.imageio.ImageIO;
+import javax.swing.*;
+import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.net.URL;
+import java.text.Normalizer;
 import java.util.*;
+import java.util.List;
 import java.util.stream.Collectors;
 
 import static com.exam.examserver.util.ImportRegex.normalizeStem;
@@ -312,26 +320,26 @@ public class ExportQuestionService {
             float jlmSize = targetPt * scale;
 
             TeXFormula f = new TeXFormula(latex);
-            org.scilab.forge.jlatexmath.TeXIcon icon =
-                    f.createTeXIcon(org.scilab.forge.jlatexmath.TeXConstants.STYLE_TEXT, jlmSize);
-            icon.setInsets(new java.awt.Insets(0,0,0,0));
+            TeXIcon icon =
+                    f.createTeXIcon(TeXConstants.STYLE_TEXT, jlmSize);
+            icon.setInsets(new Insets(0,0,0,0));
 
             int w = Math.max(1, icon.getIconWidth());
             int h = Math.max(1, icon.getIconHeight());
             BufferedImage bi = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
-            java.awt.Graphics2D g2 = bi.createGraphics();
-            g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
-            g2.setRenderingHint(java.awt.RenderingHints.KEY_RENDERING, java.awt.RenderingHints.VALUE_RENDER_QUALITY);
-            g2.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            g2.setRenderingHint(java.awt.RenderingHints.KEY_FRACTIONALMETRICS, java.awt.RenderingHints.VALUE_FRACTIONALMETRICS_ON);
-            g2.setColor(java.awt.Color.BLACK);
-            icon.paintIcon(new javax.swing.JLabel(), g2, 0, 0);
+            Graphics2D g2 = bi.createGraphics();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            g2.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
+            g2.setColor(Color.BLACK);
+            icon.paintIcon(new JLabel(), g2, 0, 0);
             g2.dispose();
 
             BufferedImage trimmed = trimTransparent(bi, 2);
 
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            javax.imageio.ImageIO.write(trimmed, "png", bos);
+            ImageIO.write(trimmed, "png", bos);
 
             Image img = new Image(ImageDataFactory.create(bos.toByteArray()));
             img.setAutoScale(false);
@@ -562,7 +570,7 @@ public class ExportQuestionService {
     }
 
     // ===== helpers (nếu bạn đã có thì giữ nguyên) =====
-    private static String up(String s){ return s==null? "": s.toUpperCase(java.util.Locale.ROOT); }
+    private static String up(String s){ return s==null? "": s.toUpperCase(Locale.ROOT); }
 
     private static void setParaSpacing(XWPFParagraph p, Integer beforePt, Integer afterPt, double lineMult) {
         var pr = p.getCTP().isSetPPr() ? p.getCTP().getPPr() : p.getCTP().addNewPPr();
@@ -864,7 +872,7 @@ public class ExportQuestionService {
         if (afterTwips  > 0) sp.setAfter (BigInteger.valueOf(afterTwips )); else if (sp.isSetAfter())  sp.unsetAfter();
         // 1.0 = 240, 1.15 ≈ 276, 1.5 = 360
         sp.setLine(BigInteger.valueOf(Math.round(line * 240)));
-        sp.setLineRule(org.openxmlformats.schemas.wordprocessingml.x2006.main.STLineSpacingRule.AUTO);
+        sp.setLineRule(STLineSpacingRule.AUTO);
     }
 
     private void writeChapterHeading(XWPFDocument doc, int chapter) {
@@ -894,7 +902,7 @@ public class ExportQuestionService {
     private void writeContentSmart(XWPFDocument doc, String text) {
         if (text == null) text = "";
 
-        for (String chunk : com.exam.examserver.util.MathOmmlRenderer.chunkByMathBlocks(text)) {
+        for (String chunk : MathOmmlRenderer.chunkByMathBlocks(text)) {
             if (chunk == null || chunk.isEmpty()) continue;
 
             String trimmed = chunk.trim();
@@ -1056,7 +1064,7 @@ public class ExportQuestionService {
 
     private static String normalizeForPdfKeepNewlines(String s) {
         if (s == null) return "";
-        s = java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFC);
+        s = Normalizer.normalize(s, Normalizer.Form.NFC);
 
         s = s.replace('\u00A0',' ')
                 .replace('\u1680',' ')
@@ -1314,9 +1322,12 @@ public class ExportQuestionService {
 
         try (XWPFDocument doc = new XWPFDocument();
              ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
-            List<List<AutoGenCellDTO>> rowsCells = rows.stream()
-                    .map(r -> r.columns)
-                    .toList();
+            List<List<AutoGenCellDTO>> rowsCells = List.of();
+            if (rows != null) {
+                rowsCells = rows.stream()
+                        .map(r -> r.columns)
+                        .toList();
+            }
             // 2. Lặp qua từng biến thể đề
             for (int i = 0; i < allVariants.size(); i++) {
                 List<List<Long>> variantRows = allVariants.get(i);
@@ -1472,7 +1483,7 @@ public class ExportQuestionService {
         CTTblWidth w = pr.getTblW();
         if (w == null) w = pr.addNewTblW();
         w.setType(STTblWidth.DXA);
-        w.setW(java.math.BigInteger.valueOf(widthTwips));
+        w.setW(BigInteger.valueOf(widthTwips));
     }
 
     // 3) Quét & làm sạch control chars toàn bộ paragraph run
