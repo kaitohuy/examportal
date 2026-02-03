@@ -324,7 +324,7 @@ public class ExamTaskService {
                 t.getId(),
                 null,
                 null,
-                AppArea.ADMIN
+                AppArea.HEAD
         );
 
         return t;
